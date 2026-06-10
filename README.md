@@ -1,4 +1,4 @@
-# mesa-core
+# mesa-core v1.0
 
 Reference implementation of the [MESA specification](documents/MESA-Specification.md) — Metadata and Environment Semantics for Agents, a semantic safety and coordination layer for AI-operated smart environments.
 
@@ -10,6 +10,8 @@ Any MCP server that handles Home Assistant AI orchestration can integrate mesa-c
 ```bash
 pip install mesa-core
 ```
+
+> ### See [MESA Overview](documents/MESA-Overview.md) for an introduction to MESA
 
 ## Minimal integration (Level 1)
 
@@ -98,3 +100,4 @@ pip install -e ".[dev]"
 pytest tests/ -v       # conformance suite
 ruff check . && mypy   # quality gates
 ```
+
