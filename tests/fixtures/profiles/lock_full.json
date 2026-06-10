@@ -1,0 +1,33 @@
+{
+  "semantic_profile": {
+    "schema_version": "1.0",
+    "metadata_origin": {"source": "user", "confidence": 1.0},
+    "semantic_tags": ["security.access_control"],
+    "operational_boundaries": {
+      "control_mode": "confirm",
+      "control_reason": "Physical security.",
+      "triggers_automations": "none",
+      "reversible": true,
+      "reversibility_cost": "moderate",
+      "side_effect_scope": "room_localized",
+      "enforcement_mode": "enforced",
+      "declared_limits": [
+        {
+          "id": "no_lock_door_open",
+          "predicate": {"entity": "binary_sensor.front_door_contact", "operator": "eq", "value": "on"},
+          "limit": {"service": "lock.lock", "parameter": "entity_id", "permitted_values": []},
+          "human_reason": "Do not lock while the door is open."
+        }
+      ],
+      "temporal_constraints": [
+        {
+          "id": "no_lock_changes_at_night",
+          "condition": {"type": "time_range", "start_time": "23:00", "end_time": "06:00"},
+          "effect": {"control_mode": "prohibited"},
+          "human_reason": "No lock changes during sleeping hours."
+        }
+      ]
+    }
+  },
+  "privacy_classification": {"level": "normal"}
+}

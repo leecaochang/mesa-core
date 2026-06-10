@@ -1,0 +1,18 @@
+{
+  "semantic_profile": {
+    "schema_version": "1.0",
+    "metadata_origin": {
+      "source": "developer",
+      "confidence": 0.82,
+      "generated_at": "2026-05-20T08:30:00+00:00"
+    },
+    "semantic_tags": ["climate.heating"],
+    "operational_boundaries": {
+      "control_mode": "confirm",
+      "triggers_automations": "unknown",
+      "reversible": true,
+      "side_effect_scope": "room_localized"
+    }
+  },
+  "privacy_classification": {"level": "normal"}
+}

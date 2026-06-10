@@ -1,0 +1,23 @@
+{
+  "semantic_profile": {
+    "schema_version": "1.0",
+    "metadata_origin": {"source": "user", "confidence": 1.0},
+    "semantic_tags": ["helper.mode_flag", "helper.high_impact"],
+    "helper_traits": {
+      "role": "mode_flag",
+      "true_meaning": "Guest mode active; privacy elevated.",
+      "false_meaning": "Normal operation.",
+      "affected_automations": ["automation.morning_routine"],
+      "default_state": false
+    },
+    "operational_boundaries": {
+      "control_mode": "confirm",
+      "triggers_automations": "likely",
+      "reversible": true,
+      "reversibility_cost": "trivial",
+      "side_effect_scope": "deployment_wide",
+      "enforcement_mode": "enforced"
+    }
+  },
+  "privacy_classification": {"level": "normal"}
+}

@@ -1,0 +1,24 @@
+{
+  "semantic_profile": {
+    "schema_version": "1.0",
+    "metadata_origin": {"source": "user", "confidence": 1.0},
+    "semantic_tags": ["automation.maintenance"],
+    "operational_boundaries": {
+      "control_mode": "autonomous",
+      "override_control_mode": true,
+      "control_reason": "Operator loosening override: vacuum is safe to run autonomously here.",
+      "triggers_automations": "none",
+      "reversible": true,
+      "side_effect_scope": "room_localized",
+      "temporal_constraints": [
+        {
+          "id": "vacuum_away_blocks_only",
+          "condition": {"type": "calendar_entity", "calendar_entity": "calendar.away_schedule", "negate": true},
+          "effect": {"control_mode": "confirm"},
+          "human_reason": "Autonomous only during scheduled away blocks."
+        }
+      ]
+    }
+  },
+  "privacy_classification": {"level": "normal"}
+}
