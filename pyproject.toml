@@ -8,8 +8,8 @@ version = "1.0.0"
 description = "Reference implementation of the MESA specification: a semantic safety and coordination layer for AI-operated smart environments."
 readme = "README.md"
 requires-python = ">=3.11"
-# TODO: choose a license before PyPI publication (see plan: deferred decision)
-authors = [{ name = "MESA Project" }]
+license = { text = "Apache-2.0" }
+authors = [{ name = "Steven Fox", email = "me@stevenfox.com" }]
 keywords = ["home-assistant", "mcp", "ai-agents", "smart-home", "semantics"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -19,6 +19,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "License :: OSI Approved :: Apache Software License",
     "Typing :: Typed",
 ]
 # Zero runtime dependencies by design: all HA data arrives via host callbacks.
