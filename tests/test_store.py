@@ -66,6 +66,30 @@ def test_domain_and_area_profiles_use_reserved_keys(backend: StorageBackend) -> 
     assert area is not None and area.inheritance_scope == "area"
 
 
+def test_delete_domain_and_area_profiles(backend: StorageBackend) -> None:
+    store = ProfileStore(backend=backend)
+    store.set_domain_profile("light", _profile("light"))
+    store.set_area_profile("area.bedroom", _profile("area.bedroom"))
+    store.set("light.x", _profile("light.x"))
+
+    store.delete_domain_profile("light")
+    assert store.get_domain_profile("light") is None
+    # Deleting a scope profile leaves the area profile and entity profiles untouched.
+    assert store.get_area_profile("area.bedroom") is not None
+    assert store.get("light.x") is not None
+
+    store.delete_area_profile("area.bedroom")
+    assert store.get_area_profile("area.bedroom") is None
+    assert store.get("light.x") is not None
+    assert store.entity_keys() == ["light.x"]
+
+
+def test_delete_missing_scope_profile_is_noop(backend: StorageBackend) -> None:
+    store = ProfileStore(backend=backend)
+    store.delete_domain_profile("nonexistent")
+    store.delete_area_profile("area.nope")  # no error, mirrors delete()
+
+
 def test_deployment_defaults_round_trip(backend: StorageBackend) -> None:
     store = ProfileStore(backend=backend)
     assert store.get_deployment_defaults() is None
@@ -191,6 +215,13 @@ def test_async_variants() -> None:
         assert await store.afind_orphans(["other.entity"]) == ["light.x"]
         await store.adelete("light.x")
         assert await store.aget("light.x") is None
+
+        store.set_domain_profile("light", _profile("light"))
+        store.set_area_profile("area.bedroom", _profile("area.bedroom"))
+        await store.adelete_domain_profile("light")
+        await store.adelete_area_profile("area.bedroom")
+        assert store.get_domain_profile("light") is None
+        assert store.get_area_profile("area.bedroom") is None
 
     asyncio.run(run())
 

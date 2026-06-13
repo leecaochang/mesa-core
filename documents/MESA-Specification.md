@@ -148,7 +148,7 @@ Full MESA implementation including semantic retrieval API, enforcement, and opti
 
 **Inferred profile poisoning.** A malicious actor could craft inputs to an AI inference system that cause it to generate dangerous profiles (e.g., marking a lock as `control_mode: autonomous`). Mitigation: inferred profiles affecting security-sensitive domains (`lock`, `alarm_control_panel`, `camera`, `binary_sensor` with security tags) MUST default to `control_mode: confirm` regardless of inference output. Human review MUST be required before such profiles become operational.
 
-**Tightening abuse and the removal path.** Because tightening always wins (Rule A) and privacy is most-restrictive-wins (Rule C), a poisoned or erroneous profile can also deny service by over-restricting: marking entities `prohibited` or `restricted` that should not be. Conflict resolution applies only to extant profiles — the remedy is removal. Operators locate the offending profile with `mesa_explain_profile`, which names the level and origin contributing each effective value, and delete or correct it through the host server's configuration interface. Host servers MUST allow operators to delete any profile of any origin.
+**Tightening abuse and the removal path.** Because tightening always wins (Rule A) and privacy is most-restrictive-wins (Rule C), a poisoned or erroneous profile can also deny service by over-restricting: marking entities `prohibited` or `restricted` that should not be. Conflict resolution applies only to extant profiles — the remedy is removal. Operators locate the offending profile with `mesa_explain_profile`, which names the level and origin contributing each effective value, and delete or correct it through the host server's configuration interface. Host servers MUST allow operators to delete any profile of any origin, at any scope — entity, area, or domain.
 
 **Declared limit bypass.** Operational boundaries in `advisory` enforcement mode are semantic descriptions that a well-behaved agent should follow. They do not replace HA's native access control. Use `enforced` mode for safety-critical limits.
 
@@ -1239,7 +1239,7 @@ Conformance levels are declared by host implementations (Section 2). Table B.1 l
 | Sidecar profiles without `metadata_origin` default to `source: developer`; all other locations default to `source: unknown` | 5.3 | L1 MUST |
 | Orphaned profiles (entity ID no longer in registry) detected and surfaced | 5.5 | L2 SHOULD |
 | Rule D: scope precedence among trusted origins; `inferred_ai`/`unknown` never override trusted-tier declarations | 5.7 | L1 MUST |
-| Operators can delete any profile of any origin | 3 | L2 MUST |
+| Operators can delete any profile of any origin, at any scope (entity, area, domain) | 3 | L2 MUST |
 | Inferred profiles require opt-in in retrieval API | 5.4 | L2 MUST |
 | All inferred profiles default `control_mode: confirm` | 5.4 | L2 MUST |
 | Helper-domain inferred profiles default `triggers_automations: likely`; MUST NOT assert `none` | 5.4 | L2 MUST |

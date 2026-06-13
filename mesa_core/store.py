@@ -168,6 +168,9 @@ class ProfileStore:
     def set_domain_profile(self, domain: str, profile: SemanticProfile) -> None:
         self.backend.write(f"{_DOMAIN_PREFIX}{domain}", self._stamped_doc(profile))
 
+    def delete_domain_profile(self, domain: str) -> None:
+        self.backend.delete(f"{_DOMAIN_PREFIX}{domain}")
+
     def get_area_profile(self, area_id: str) -> SemanticProfile | None:
         data = self.backend.read(f"{_AREA_PREFIX}{area_id}")
         if data is None:
@@ -178,6 +181,9 @@ class ProfileStore:
 
     def set_area_profile(self, area_id: str, profile: SemanticProfile) -> None:
         self.backend.write(f"{_AREA_PREFIX}{area_id}", self._stamped_doc(profile))
+
+    def delete_area_profile(self, area_id: str) -> None:
+        self.backend.delete(f"{_AREA_PREFIX}{area_id}")
 
     # -- deployment defaults ----------------------------------------------------
 
@@ -298,6 +304,12 @@ class ProfileStore:
 
     async def adelete(self, entity_id: str) -> None:
         await asyncio.to_thread(self.delete, entity_id)
+
+    async def adelete_domain_profile(self, domain: str) -> None:
+        await asyncio.to_thread(self.delete_domain_profile, domain)
+
+    async def adelete_area_profile(self, area_id: str) -> None:
+        await asyncio.to_thread(self.delete_area_profile, area_id)
 
     async def aset_many(self, profiles: dict[str, SemanticProfile]) -> None:
         await asyncio.to_thread(self.set_many, profiles)
