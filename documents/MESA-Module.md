@@ -897,7 +897,7 @@ Version 1 of mesa-core implements the MESA Specification at Level 1 and Level 2,
 
 **SemanticProfile dataclass.** All kernel fields. All fields from Specification Sections 5 through 8. Serialisation and deserialisation from JSON/dict.
 
-**Canonical JSON Schema.** A machine-readable JSON Schema file (`mesa_core/schemas/mesa_profile.schema.json`) defining the complete MESA profile structure as specified in the Specification. This is the authoritative validation artifact — `validation.py` uses it, and third-party tools can consume it directly without reimplementing validation from prose tables. A separate `mesa_tools.schema.json` defines the input and output schemas for all MCP tools.
+**Canonical JSON Schema.** A machine-readable JSON Schema file (`mesa_core/schemas/mesa_profile.schema.json`) defining the complete MESA profile structure as specified in the Specification. This is the authoritative validation artifact; `validation.py` uses it, and third-party tools can consume it directly without reimplementing validation from prose tables. A separate `mesa_tools.schema.json` defines the input and output schemas for all MCP tools.
 
 **Profile validation.** Kernel field presence checks. Enum value validation for `control_mode`, `triggers_automations`, `privacy_classification.level`. Predicate operator validation (canonical tokens and `ha_condition` type). Tag format validation (canonical or `vendorname.qualifier`). Malformed inferred profile detection. All validation is driven by the canonical JSON Schema.
 

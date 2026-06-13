@@ -1,6 +1,6 @@
 # mesa-core v1.0
 
-Reference implementation of the [MESA specification](documents/MESA-Specification.md) — Metadata and Environment Semantics for Agents, a semantic safety and coordination layer for AI-operated smart environments.
+Reference implementation of the [MESA specification](documents/MESA-Specification.md) (Metadata and Environment Semantics for Agents), a semantic safety and coordination layer for AI-operated smart environments.
 
 Any MCP server that handles Home Assistant AI orchestration can integrate mesa-core to gain MESA profile management, semantic enforcement, retrieval API tools, and privacy controls without reimplementing the specification.
 
@@ -81,11 +81,11 @@ Sidecar `mesa_profile.json` files default to `source: developer` (Spec 5.3).
 
 ## Documentation
 
-- [MESA Overview](documents/MESA-Overview.md) — the problem and the seven-field kernel
-- [MESA Specification (Core)](documents/MESA-Specification.md) — normative schemas, Sections 1-9 and 22-24
-- [MESA Enrichment](documents/MESA-Enrichment.md) — advanced domains, Sections 10-21
-- [Getting Started Guide](documents/MESA-Getting-Started.md) — add your first profile today
-- [Module Proposal](documents/MESA-Module.md) — architecture and integration guide for this library
+- [MESA Overview](documents/MESA-Overview.md) - the problem and the seven-field kernel
+- [MESA Specification (Core)](documents/MESA-Specification.md) - normative schemas, Sections 1-9 and 22-24
+- [MESA Enrichment](documents/MESA-Enrichment.md) - advanced domains, Sections 10-21
+- [Getting Started Guide](documents/MESA-Getting-Started.md) - add your first profile today
+- [Module Proposal](documents/MESA-Module.md) - architecture and integration guide for this library
 
 The canonical machine-readable schemas ship in the package: `mesa_core/schemas/mesa_profile.schema.json` and `mesa_core/schemas/mesa_tools.schema.json`.
 

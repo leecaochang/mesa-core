@@ -10,7 +10,7 @@ This document specifies the twelve MESA enrichment domains: schemas that improve
 
 **Nothing in this document is required.** Implementing none of it leaves a complete, valid, useful MESA implementation. Implementing any subset delivers proportional benefit. All schemas are additive, and fields here that conflict with Core fields follow the global conflict resolution rules defined in Core Section 5.7.
 
-One qualification: where this document defines behavioural rules for specific component types — person entities (Section 17) are the significant case — those rules bind any implementation that processes profiles for those component types, regardless of which other enrichment domains it implements. These rules are summarised in the Core document's Appendix B.
+One qualification: where this document defines behavioural rules for specific component types (person entities, Section 17, are the significant case), those rules bind any implementation that processes profiles for those component types, regardless of which other enrichment domains it implements. These rules are summarised in the Core document's Appendix B.
 
 Read a section when you have a specific problem it solves: spatial leakage when agents make spatially naive decisions, diagnostic semantics when agents cannot distinguish failure modes, automation cooperative priority when race conditions are occurring. Each section is self-contained. You do not need to read this document in order or in full.
 

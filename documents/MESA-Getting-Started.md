@@ -94,7 +94,7 @@ privacy_classification:
 
 When this field is absent, agents default to `confirm`. There is no silent autonomous default.
 
-**Precedence rule:** You can always tighten. If a developer sets `prohibited` or `read_only`, you as an operator cannot change that — ever. You can change `autonomous` to `confirm` or `prohibited`, and `confirm` to `prohibited`. Loosening works in exactly one case: if a developer shipped `confirm` and you know autonomous control is safe in your deployment, set `control_mode: autonomous` at the entity level together with `override_control_mode: true` and a `control_reason` explaining why. The explicit flag protects against accidental loosening of safety constraints.
+**Precedence rule:** You can always tighten. If a developer sets `prohibited` or `read_only`, you as an operator cannot change that, ever. You can change `autonomous` to `confirm` or `prohibited`, and `confirm` to `prohibited`. Loosening works in exactly one case: if a developer shipped `confirm` and you know autonomous control is safe in your deployment, set `control_mode: autonomous` at the entity level together with `override_control_mode: true` and a `control_reason` explaining why. The explicit flag protects against accidental loosening of safety constraints.
 
 **Add `control_reason`** for any `confirm` or `prohibited` entity. A short string explaining why is invaluable for debugging and for agents communicating refusals: `"triggers alarm automation"`, `"medical device"`, `"physically dangerous if reversed"`.
 
@@ -248,9 +248,9 @@ Create it with `semantic_profile` and `privacy_classification` as top-level keys
 5. Answer: does this integration capture personal data? Set `privacy_classification.level` accordingly.
 6. Commit and push.
 
-`metadata_origin` is optional in `mesa_profile.json`: an absent field defaults to `source: developer`. Declare it explicitly anyway if an AI assistant helped write the profile (`source: hybrid` with your `confirmed_fields`) — the default assumes you authored it yourself.
+`metadata_origin` is optional in `mesa_profile.json`: an absent field defaults to `source: developer`. Declare it explicitly anyway if an AI assistant helped write the profile (`source: hybrid` with your `confirmed_fields`); the default assumes you authored it yourself.
 
-**Why a separate file instead of `manifest.json`?** The hassfest validation action used in most custom integration CI pipelines rejects unknown `manifest.json` keys (`extra keys not allowed`), so embedding MESA keys there would fail your CI. A sidecar file ships with your integration exactly the same way — it is just another file in your integration directory — and nothing in the HA toolchain touches it.
+**Why a separate file instead of `manifest.json`?** The hassfest validation action used in most custom integration CI pipelines rejects unknown `manifest.json` keys (`extra keys not allowed`), so embedding MESA keys there would fail your CI. A sidecar file ships with your integration exactly the same way; it is just another file in your integration directory, and nothing in the HA toolchain touches it.
 
 If you are not sure what values to use, go to Section 4 and use an AI assistant to generate the profile for you. It takes about two minutes.
 
@@ -1007,7 +1007,7 @@ Tags like `lighting.cozy` or `security.important` are not canonical and will not
 If your integration requires cloud connectivity, `network_dependency` must be `cloud_required`. Fix the integration rather than misrepresenting it.
 
 **Omitting `metadata_origin` when it matters.**
-A profile shipped in an integration's `mesa_profile.json` defaults to `source: developer` when the field is absent — which is only correct if you wrote the profile yourself. If an AI assistant generated any part of it, the default misrepresents provenance: declare `source: hybrid` or `source: inferred_ai` explicitly. Profiles stored anywhere else are treated as `unknown` without `metadata_origin` and trusted no more than an unreviewed AI guess. Include it.
+A profile shipped in an integration's `mesa_profile.json` defaults to `source: developer` when the field is absent, which is only correct if you wrote the profile yourself. If an AI assistant generated any part of it, the default misrepresents provenance: declare `source: hybrid` or `source: inferred_ai` explicitly. Profiles stored anywhere else are treated as `unknown` without `metadata_origin` and trusted no more than an unreviewed AI guess. Include it.
 
 **Using long-form predicate operators.**
 Use `eq`, not `equals`. Use `gt`, not `greater_than`. Unrecognised tokens must be rejected by conforming implementations.
