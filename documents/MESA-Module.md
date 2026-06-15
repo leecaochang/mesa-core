@@ -314,6 +314,10 @@ class ProfileStore:
     def get_area_profile(self, area_id: str) -> Optional[SemanticProfile]: ...
     def set_area_profile(self, area_id: str, profile: SemanticProfile) -> None: ...
     def delete_area_profile(self, area_id: str) -> None: ...
+    # Key enumeration: stored identifiers per scope, as bare names.
+    def entity_keys(self) -> List[str]: ...
+    def domain_keys(self) -> List[str]: ...
+    def area_keys(self) -> List[str]: ...
     def list(self,
              domain: Optional[str] = None,
              tags: Optional[List[str]] = None,
@@ -341,6 +345,8 @@ class ProfileStore:
 **Sync and async APIs.** All public methods on `ProfileStore`, `MesaEnforcer`, `InheritanceResolver`, `TriggerValidator`, and `PrivacyEnforcer` are available in both synchronous and asynchronous variants. Async methods are prefixed with `a` (e.g. `get()` / `aget()`, `evaluate()` / `aevaluate()`). MCP servers are typically async; synchronous APIs will block the event loop in async contexts. Host servers SHOULD use async variants in production.
 
 **Bulk operations.** `set_many()` and `delete_many()` (and their async variants `aset_many()`, `adelete_many()`) accept dictionaries and lists respectively, allowing operators to import or remove profiles for many entities in a single operation. These are essential for deployments with hundreds of entities.
+
+**Scope enumeration.** `domain_keys()` and `area_keys()` return the domain names and area IDs that have a scope-level profile stored, as bare identifiers, mirroring `entity_keys()` for entity profiles. The reserved key scheme that separates the three scopes internally is never exposed. Pair them with `get_domain_profile()` / `get_area_profile()` to walk every stored scope profile, for instance to surface the domain and area defaults an operator has configured.
 
 **Orphan detection.** `find_orphans(known_entity_ids)` returns stored profile keys absent from the provided entity ID list, so hosts can detect profiles orphaned by entity renames (Specification Section 5.5). Hosts SHOULD run it at startup and on `entity_registry_updated` events and surface results to the operator.
 
