@@ -26,7 +26,11 @@ from mesa_core.profile import (
 )
 from mesa_core.store import DeploymentDefaults, ProfileQueryResult, ProfileStore
 from mesa_core.temporal import TemporalEvaluator, TemporalResult
-from mesa_core.trigger_validator import TriggerValidator, ValidationIssue
+from mesa_core.trigger_validator import (
+    TriggerValidator,
+    ValidationIssue,
+    entities_by_role,
+)
 from mesa_core.validation import ValidationReport, validate_document, validate_or_raise
 
 __version__ = "1.0.0"
@@ -63,6 +67,7 @@ __all__ = [
     "TriggersAutomations",
     "ValidationIssue",
     "ValidationReport",
+    "entities_by_role",
     "import_from_integration",
     "migrate_profile",
     "validate_document",

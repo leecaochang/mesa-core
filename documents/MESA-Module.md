@@ -611,6 +611,17 @@ class TriggerValidator:
 
 The host server provides `get_automation_configs` as a callback that returns HA automation configurations in standard HA dict format. mesa-core never calls HA directly. The callback may return automations from any source: the HA REST API, a local `automations.yaml` parse, or a test fixture.
 
+**Automation traversal primitive.** The same entity-reference walk that `TriggerValidator` uses internally is exposed as a public, stateless function:
+
+```python
+from mesa_core import entities_by_role
+
+entities_by_role(config: dict) -> dict[str, set[str]]
+# Returns {"trigger": {...}, "condition": {...}, "action": {...}}
+```
+
+Given a single automation config dict, it returns the entity IDs referenced in each block, handling the singular/plural HA section keys (`trigger`/`triggers`, etc.) transparently. This is the canonical traversal for automation configs. Hosts building reverse-reference indexes (entity -> automations that reference it) SHOULD call `entities_by_role` over their own automation configs rather than reimplementing the entity-ID walk, so that HA-config-format knowledge stays in one place. mesa-core deliberately does not provide the reverse index, relationship graph, or script/scene traversal itself; those remain host concerns layered on this primitive.
+
 **When to run validation:** Level 2 and Level 3 host servers SHOULD run `validate_triggers_automations()` at startup and whenever the automation registry changes (detected via the `automation_reloaded` HA event). Validation results SHOULD be surfaced to operators through the server's configuration interface and included in `mesa_explain_profile` output.
 
 ### 4.9 PrivacyEnforcer
