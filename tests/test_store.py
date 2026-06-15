@@ -66,6 +66,21 @@ def test_domain_and_area_profiles_use_reserved_keys(backend: StorageBackend) -> 
     assert area is not None and area.inheritance_scope == "area"
 
 
+def test_domain_and_area_keys_enumerate_scope_profiles(backend: StorageBackend) -> None:
+    store = ProfileStore(backend=backend)
+    store.set_domain_profile("light", _profile("light"))
+    store.set_domain_profile("lock", _profile("lock"))
+    store.set_area_profile("area.bedroom", _profile("area.bedroom"))
+    store.set("light.x", _profile("light.x"))
+    store.set_deployment_defaults({"deployment_defaults": {"default_control_mode": "confirm"}})
+
+    # Bare names are returned, and the scopes never bleed into each other or
+    # pick up entity keys / the deployment-defaults reserved key.
+    assert store.domain_keys() == ["light", "lock"]
+    assert store.area_keys() == ["area.bedroom"]
+    assert store.entity_keys() == ["light.x"]
+
+
 def test_delete_domain_and_area_profiles(backend: StorageBackend) -> None:
     store = ProfileStore(backend=backend)
     store.set_domain_profile("light", _profile("light"))
