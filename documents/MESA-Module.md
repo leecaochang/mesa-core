@@ -444,6 +444,25 @@ print(DOMAIN_SAFETY_BASELINE["light"])   # ControlMode.AUTONOMOUS
 print(DOMAIN_SAFETY_BASELINE["lock"])    # ControlMode.PROHIBITED
 ```
 
+**Fail-closed (deny-by-default) deployments.** Some hosts delegate all per-entity gating to MESA rather than maintaining their own permission layer (for example a single pass-through credential whose entire policy is "whatever MESA says"). The built-in baseline is permissive for some domains (`light` is `autonomous`; unknown domains are `confirm`), so a forgotten entity could be controllable. To invert the posture so unprofiled entities fail closed, configure `deployment_defaults` with a restrictive global default and open up only the domains (or individual entity/area/domain profiles) you intend to be controllable:
+
+```python
+from mesa_core import ControlMode
+from mesa_core.store import DeploymentDefaults
+
+store.set_deployment_defaults(DeploymentDefaults(
+    default_control_mode=ControlMode.PROHIBITED,   # fallback for unprofiled entities
+    domain_overrides={
+        "light": {"control_mode": "autonomous"},   # domains to leave controllable
+    },
+))
+```
+
+This default applies **only as a fallback**: it fills `control_mode` solely when no profile at any level (entity, area, or domain) declares it. It does not participate in the Rule A most-restrictive comparison, so an entity (or its area/domain) that declares `autonomous` stays `autonomous`; a restrictive default never dominates a declared value. Two practical notes for fail-closed operators:
+
+- `prohibited` hard-blocks only when the call is evaluated in enforced mode; in advisory mode it passes with a warning. Pair a `prohibited` default with enforced evaluation. (`read_only` blocks regardless of enforcement mode, but it asserts entity nature rather than policy, so `prohibited` is the better fit for "not yet granted.")
+- `control_mode` gates control (writes/service calls) only; it never gates reads. mesa-core has no blanket read-deny default, and privacy denial is role-based (`access_roles.deny_for`), not a configurable default. Read/visibility fail-closed remains the host's responsibility.
+
 **Evaluation order:**
 
 1. Resolve effective profile via InheritanceResolver.
