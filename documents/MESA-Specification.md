@@ -426,6 +426,8 @@ When multiple profiles declare `privacy_classification.level` for the same entit
 **Rule D: Scope precedence with origin tiebreak for all other fields.**
 For all fields not covered by Rules A, B, or C, resolution proceeds in two tiers. Within the trusted tier (`developer`, `user`, `hybrid`), the most specific scope wins: `entity` > `area` > `domain`. Where scope is equal, origin authority decides: `developer` > `user` > `hybrid`. Profiles of `inferred_ai` or `unknown` origin form a lower tier: they never override a field explicitly declared by any trusted-tier profile at any scope, consistent with Rule 7 (Section 5.4). When a field is declared only in the lower tier, the same scope-then-origin rule applies within it (`inferred_ai` > `unknown`). This preserves operator sovereignty (an operator's entity-level declaration beats a developer's domain-level default) while ensuring inferred and unattributed profiles can fill gaps but never displace explicit human or developer declarations.
 
+**Rule D, array-valued safety fields.** `declared_limits` and `temporal_constraints` are the exception to the replacement behaviour above: they are unioned across inheritance levels, not replaced. Each entry is an independent constraint identified by its `id`, and conforming consumers apply every entry, so the union is tightest-wins at evaluation time. The effective array is the union of all entries declared at every level. When the same `id` is declared at more than one level, that single entry is resolved by the standard Rule D precedence (trusted tier first, then most specific scope, then origin authority): a lower-tier entry MUST NOT displace a trusted entry with the same `id`, and a trusted profile at a more specific scope MAY deliberately override one inherited entry by reusing its `id`. Because entries only ever tighten, a more specific profile cannot silently drop an inherited safety limit by declaring an unrelated one. Removing an inherited entry therefore requires overriding it by `id`; there is no wholesale array replacement.
+
 **Rule E: Absence is not a conflict.**
 A field absent from a higher-authority profile is inherited from lower-authority profiles in scope. Absence means "not specified here," not "set to default." Defaults only apply when no profile at any level specifies the field.
 
@@ -493,6 +495,8 @@ This baseline is not a substitute for explicit `deployment_defaults` or entity-l
 
 Operational boundaries are machine-readable policy declarations. They describe how an entity should be treated by AI agents. A conforming agent SHOULD respect them. A Level 3 server in `enforced` mode MUST reject service calls that violate them.
 
+**Matching is exact against canonical identifiers.** When a Level 3 server evaluates a service call against `declared_limits`, `temporal_constraints`, or predicates, it compares service names, parameter names, entity IDs, and discrete state values as exact strings against their canonical Home Assistant forms (`domain.service` service names, canonical entity IDs, canonical state strings). MESA normalises only canonical Home Assistant boolean state conventions (`on`/`off` read as `true`/`false`); it does not normalise aliases, casing, or other equivalent encodings at evaluation time. Host implementations MUST canonicalise incoming service calls and entity state before evaluation: a call presented in a non-canonical form (for example `unlock` instead of `lock.unlock`, or a boolean `false` where the entity state string is `off`) will not match the boundary intended to govern it and would pass evaluation unconstrained. This canonicalisation is a precondition for the enforcement guarantees in Section 3.
+
 ### 6.1 Boundary Schema
 
 | Field | Type | Required | Description |
@@ -556,6 +560,8 @@ Operational boundaries are machine-readable policy declarations. They describe h
 }
 ```
 
+**Server mode and `enforcement_mode`.** `enforcement_mode` is resolved per Rule D (Section 5.7): a more specific profile MAY set it, including declaring `advisory` where a broader level declared `enforced`. This MUST NOT create a fail-open path on a server that is itself operating in `enforced` mode. A Level 3 server enforces a call when either the server's operating mode or the effective profile's `enforcement_mode` is `enforced`; the two compose disjunctively. A profile-level `advisory` therefore weakens enforcement only on a server that is itself running in advisory mode, which is an operator-level decision to treat all boundaries as advisory. Operators who require enforcement MUST run the server in `enforced` mode; in that posture a per-profile `enforcement_mode` can only add enforcement, never remove it.
+
 ### 6.2 Side Effect Scope
 
 `side_effect_scope` describes the **direct physical footprint** of a write operation. It refers strictly to hardware-level consequences, not downstream automation cascades. Automation cascade effects are the responsibility of the automation conflict system (Section 11, MESA Enrichment).
@@ -610,7 +616,7 @@ Implementations MUST reject unrecognised non-HA operator tokens rather than gues
 
 ### 6.4 Declared Limits Schema
 
-Declared limits express conditional value constraints. An agent SHOULD treat them as advisory unless `enforcement_mode` is `enforced`.
+Declared limits express conditional value constraints. An agent SHOULD treat them as advisory unless `enforcement_mode` is `enforced`. Across inheritance levels, `declared_limits` are unioned, not replaced (Section 5.7, Rule D array-valued safety fields).
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -652,7 +658,7 @@ Declared limits express conditional value constraints. An agent SHOULD treat the
 
 ### 6.5 Temporal Constraints Schema
 
-Temporal constraints allow boundary rules to be conditioned on time, day, or calendar state. They extend declared limits to handle time-based conditions.
+Temporal constraints allow boundary rules to be conditioned on time, day, or calendar state. They extend declared limits to handle time-based conditions. Like `declared_limits`, `temporal_constraints` are unioned across inheritance levels, not replaced (Section 5.7).
 
 | Field | Type | Required | Description |
 |---|---|---|---|
