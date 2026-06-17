@@ -318,6 +318,155 @@ def test_rule_e_undeclared_fields_stay_unset() -> None:
     assert effective.operational_boundaries.side_effect_scope is None
 
 
+# ------------------------------------------- Rule D union (declared_limits / temporal)
+
+
+def _limit(limit_id: str, **limit_spec: Any) -> dict[str, Any]:
+    return {
+        "id": limit_id,
+        "predicate": {"entity": "input_boolean.night_mode", "operator": "eq", "value": True},
+        "limit": {"service": "media_player.volume_set", "parameter": "volume_level", **limit_spec},
+    }
+
+
+def _limit_ids(profile: SemanticProfile) -> set[str]:
+    return {entry["id"] for entry in profile.operational_boundaries.declared_limits}
+
+
+def _limit_by_id(profile: SemanticProfile, limit_id: str) -> dict[str, Any]:
+    return next(
+        entry
+        for entry in profile.operational_boundaries.declared_limits
+        if entry["id"] == limit_id
+    )
+
+
+def test_declared_limits_union_distinct_ids_across_layers() -> None:
+    # The audit's core finding: an entity-level limit must not erase a
+    # domain-level safety limit. Distinct ids compose, and are not a conflict.
+    effective, res = resolve(
+        "media_player.kitchen",
+        Layer(
+            "entity",
+            make_profile(
+                "media_player.kitchen",
+                boundaries={"declared_limits": [_limit("source_allowlist", permitted_values=["aux"])]},
+            ),
+        ),
+        Layer(
+            "domain",
+            make_profile(
+                "media_player",
+                origin="developer",
+                boundaries={"declared_limits": [_limit("night_volume_cap", max_value=0.4)]},
+            ),
+        ),
+    )
+    assert _limit_ids(effective) == {"source_allowlist", "night_volume_cap"}
+    assert not res.conflicts_detected
+
+
+def test_declared_limits_same_id_trusted_entity_overrides_domain() -> None:
+    # Reusing an id is a deliberate per-entry override: most specific scope wins.
+    effective, res = resolve(
+        "media_player.kitchen",
+        Layer(
+            "entity",
+            make_profile(
+                "media_player.kitchen",
+                origin="user",
+                boundaries={"declared_limits": [_limit("cap", max_value=0.8)]},
+            ),
+        ),
+        Layer(
+            "domain",
+            make_profile(
+                "media_player",
+                origin="developer",
+                boundaries={"declared_limits": [_limit("cap", max_value=0.4)]},
+            ),
+        ),
+    )
+    assert _limit_ids(effective) == {"cap"}
+    assert _limit_by_id(effective, "cap")["limit"]["max_value"] == 0.8
+    entry = next(
+        e for e in res.explanations if e.field_path == "operational_boundaries.declared_limits"
+    )
+    assert entry.conflict and "same-id" in (entry.conflict_resolution or "")
+
+
+def test_declared_limits_lower_tier_cannot_override_trusted_same_id() -> None:
+    # An inferred entity limit must not loosen a developer domain limit it shares
+    # an id with: the trusted tier is preserved (mirrors scalar Rule D).
+    effective, _ = resolve(
+        "media_player.kitchen",
+        Layer(
+            "entity",
+            make_profile(
+                "media_player.kitchen",
+                origin="inferred_ai",
+                boundaries={"declared_limits": [_limit("cap", max_value=1.0)]},
+            ),
+        ),
+        Layer(
+            "domain",
+            make_profile(
+                "media_player",
+                origin="developer",
+                boundaries={"declared_limits": [_limit("cap", max_value=0.4)]},
+            ),
+        ),
+    )
+    assert _limit_by_id(effective, "cap")["limit"]["max_value"] == 0.4
+
+
+def test_declared_limits_single_layer_unchanged() -> None:
+    effective, res = resolve(
+        "media_player.kitchen",
+        Layer(
+            "domain",
+            make_profile(
+                "media_player",
+                origin="developer",
+                boundaries={"declared_limits": [_limit("night_volume_cap", max_value=0.4)]},
+            ),
+        ),
+    )
+    assert _limit_ids(effective) == {"night_volume_cap"}
+    assert not res.conflicts_detected
+
+
+def test_temporal_constraints_union_across_layers() -> None:
+    def _tc(tc_id: str) -> dict[str, Any]:
+        return {
+            "id": tc_id,
+            "condition": {"type": "time_range", "start_time": "22:00", "end_time": "06:00"},
+            "effect": {"control_mode": "confirm"},
+        }
+
+    effective, res = resolve(
+        "media_player.kitchen",
+        Layer(
+            "entity",
+            make_profile(
+                "media_player.kitchen",
+                boundaries={"temporal_constraints": [_tc("entity_quiet_hours")]},
+            ),
+        ),
+        Layer(
+            "domain",
+            make_profile(
+                "media_player",
+                origin="developer",
+                boundaries={"temporal_constraints": [_tc("domain_night_lock")]},
+            ),
+        ),
+    )
+    ids = {tc["id"] for tc in effective.operational_boundaries.temporal_constraints}
+    assert ids == {"entity_quiet_hours", "domain_night_lock"}
+    assert not res.conflicts_detected
+
+
 def test_effective_tags_are_union_across_levels() -> None:
     effective, _ = resolve(
         "light.x",

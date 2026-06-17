@@ -268,6 +268,69 @@ def test_declared_limit_blocks_when_predicate_active() -> None:
     assert daytime.allowed
 
 
+def test_entity_limit_does_not_shadow_domain_safety_limit() -> None:
+    # Audit regression: a domain-level developer safety cap must survive even when
+    # an entity-level profile declares its own unrelated limit. Under wholesale
+    # array replacement the domain cap was erased and the call would be allowed.
+    store = ProfileStore(backend=MemoryBackend())
+    store.set_domain_profile(
+        "media_player",
+        make_profile(
+            "media_player",
+            origin="developer",
+            boundaries={
+                "control_mode": "autonomous",
+                "declared_limits": [
+                    {
+                        "id": "night_volume_cap",
+                        "predicate": {
+                            "entity": "input_boolean.night_mode",
+                            "operator": "eq",
+                            "value": True,
+                        },
+                        "limit": {
+                            "service": "media_player.volume_set",
+                            "parameter": "volume_level",
+                            "max_value": 0.4,
+                        },
+                        "human_reason": "Household occupants are sleeping.",
+                    }
+                ],
+            },
+        ),
+    )
+    store.set(
+        "media_player.kitchen",
+        make_profile(
+            "media_player.kitchen",
+            boundaries={
+                "declared_limits": [
+                    {
+                        "id": "source_allowlist",
+                        "predicate": {
+                            "entity": "input_boolean.guest_mode",
+                            "operator": "eq",
+                            "value": True,
+                        },
+                        "limit": {
+                            "service": "media_player.select_source",
+                            "parameter": "source",
+                            "permitted_values": ["Spotify", "aux"],
+                        },
+                    }
+                ],
+            },
+        ),
+    )
+    enforcer = make_enforcer(store, get_state=lambda eid: "on")  # night_mode on
+
+    blocked = enforcer.evaluate(
+        "media_player.kitchen", "media_player.volume_set", {"volume_level": 0.9}, current_time=NOON
+    )
+    assert not blocked.allowed
+    assert blocked.rule_applied == "declared_limit:night_volume_cap"
+
+
 def test_unevaluable_predicate_fails_closed() -> None:
     store = ProfileStore(backend=MemoryBackend())
     store.set(
