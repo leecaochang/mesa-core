@@ -9,7 +9,7 @@ description = "Reference implementation of the MESA specification: a semantic sa
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
-authors = [{ name = "Steven Fox", email = "me@stevenfox.com" }]
+authors = [{ name = "Steven Fox", email = "sfox38@gmail.com" }]
 keywords = ["home-assistant", "mcp", "ai-agents", "smart-home", "semantics"]
 classifiers = [
     "Development Status :: 4 - Beta",

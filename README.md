@@ -1,73 +1,83 @@
-# mesa-core v1.0
 
-Reference implementation of the [MESA specification](documents/MESA-Specification.md) (Metadata and Environment Semantics for Agents), a semantic safety and coordination layer for AI-operated smart environments.
+# mesa-core.
 
-Any MCP server that handles Home Assistant AI orchestration can integrate mesa-core to gain MESA profile management, semantic enforcement, retrieval API tools, and privacy controls without reimplementing the specification.
+[![CI](https://github.com/sfox38/mesa-core/actions/workflows/ci.yml/badge.svg)](https://github.com/sfox38/mesa-core/actions/workflows/ci.yml)
 
-- **Zero runtime dependencies.** All HA data arrives through host callbacks; mesa-core never imports `homeassistant` and makes no network calls.
-- **Distribution:** `mesa-core` on PyPI; **import name:** `mesa_core` (the `mesa` import name belongs to the Mesa agent-based modeling framework).
+mesa-core decides whether an AI agent should be allowed to act on a smart-home device, and how cautious it should be about it.
+
+When an assistant tries to turn on a light, unlock the front door, or change the thermostat, mesa-core answers three questions: is this allowed, should the user confirm it first, and why. It ships with safe defaults (a light is fine to control automatically; unlike a lock) that you refine for each home.
+
+It is the reference implementation of the [MESA specification](documents/MESA-Specification.md). It has no runtime dependencies and never talks to Home Assistant directly: you hand it device state through callback functions, and it hands you decisions.
 
 ```bash
 pip install mesa-core
 ```
 
-> ### See [MESA Overview](documents/MESA-Overview.md) for an introduction to MESA
+## Quick look
 
-## Minimal integration (Level 1)
+```python
+from mesa_core import MesaEnforcer, ProfileStore
+from mesa_core.backends import MemoryBackend
+
+enforcer = MesaEnforcer(ProfileStore(backend=MemoryBackend()))
+
+# An AI agent wants to unlock the front door. Should it?
+result = enforcer.evaluate("lock.front_door", "lock.unlock")
+
+result.allowed   # False
+result.reason    # "Entity is prohibited by policy: lock.front_door"
+```
+
+## How decisions work
+
+- Every device has a control mode: act freely, ask the user first, read-only, or never act.
+- Devices you have not configured fall back to safe defaults: lights act freely, locks and alarm panels are off-limits, everything else asks first.
+- Rules can be set for a single device, an area, or a whole device type, and are combined with a bias toward caution: the more restrictive rule wins, and anything that cannot be checked blocks rather than allows.
+- You can add finer limits (cap the speaker volume after 10pm) and time-based rules (no blinds before sunrise).
+
+## Asking the user to confirm
+
+When a device is set to confirm first, `evaluate` returns a challenge instead of a yes. Show the action to the user, then call again with the token from the approved challenge.
+
+```python
+result = enforcer.evaluate("cover.garage", "cover.open_cover")
+if result.confirmation_challenge:
+    # present result.confirmation_challenge to the user; once approved,
+    # build a confirmation_token from it and re-submit the same call:
+    result = enforcer.evaluate(
+        "cover.garage", "cover.open_cover",
+        confirmation_token=approved_token,
+    )
+```
+
+## Reading a device's profile
+
+`ProfileStore` resolves the effective profile after inheritance and defaults. Use a file backend to persist profiles under your HA config:
 
 ```python
 from mesa_core import ProfileStore
 from mesa_core.backends import JsonFileBackend
 
 store = ProfileStore(backend=JsonFileBackend("/config/mesa/"))
-
-# Effective profile after inheritance, conflict rules, and safety baselines:
 profile = store.get_effective("light.living_room_ceiling")
-print(profile.operational_boundaries.control_mode)  # e.g. ControlMode.AUTONOMOUS
+profile.operational_boundaries.control_mode   # ControlMode.AUTONOMOUS
 ```
 
-## Enforcement
+## Exposing it to an AI agent (MCP)
 
-```python
-from datetime import datetime
-from mesa_core import MesaEnforcer, CallerContext
-
-enforcer = MesaEnforcer(store, get_state=my_ha_state_lookup)
-
-result = enforcer.evaluate(
-    entity_id="lock.front_door",
-    service="lock.unlock",
-    service_params={"entity_id": "lock.front_door"},
-    caller_context=CallerContext(
-        caller_id="user.abc", roles=["primary_resident"],
-        is_authenticated=True, session_id="sess-1",
-    ),
-    current_time=datetime.now(),
-)
-if not result.allowed:
-    if result.confirmation_challenge:
-        # control_mode: confirm in enforced mode -- present the action to the
-        # user, then re-submit with confirmation_token (Spec 6.6).
-        ...
-    else:
-        raise PermissionError(result.reason)
-```
-
-Unprofiled entities get the built-in domain safety baseline (Spec 5.8): lights are autonomous, locks and alarm panels are prohibited, everything else asks first. Temporal constraints are fail-closed, loosening effects are ignored, and declared limits with unevaluable predicates stay active.
-
-## MCP tools (Level 3 retrieval API)
+Register MESA's tools into an MCP server so the agent can look up profiles and caller context for itself.
 
 ```python
 from mesa_core.mcp import register_mesa_tools
 
 register_mesa_tools(store, adapter="fastmcp", server=app)
-# Registers: mesa_query_profiles, mesa_get_profile,
-#            mesa_explain_profile, mesa_get_caller_context
 ```
 
-Adapters ship for FastMCP and the raw MCP Python SDK (`pip install mesa-core[fastmcp]` / `[mcp]`); any other framework implements the small `ToolRegistry` protocol.
+Adapters ship for FastMCP and the MCP Python SDK (`pip install "mesa-core[fastmcp]"` or `"mesa-core[mcp]"`). Any other framework can implement a small registration protocol.
 
-## Developer profiles from integrations
+## Loading profiles shipped by integrations
+
+An HA integration can ship a `mesa_profile.json` describing its own devices. Load it with:
 
 ```python
 from mesa_core import import_from_integration
@@ -77,27 +87,22 @@ if profile is not None:
     store.set_domain_profile(profile.entity_id, profile)
 ```
 
-Sidecar `mesa_profile.json` files default to `source: developer` (Spec 5.3).
-
 ## Documentation
 
-- [MESA Overview](documents/MESA-Overview.md) - the problem and the seven-field kernel
-- [MESA Specification (Core)](documents/MESA-Specification.md) - normative schemas, Sections 1-9 and 22-24
-- [MESA Enrichment](documents/MESA-Enrichment.md) - advanced domains, Sections 10-21
-- [Getting Started Guide](documents/MESA-Getting-Started.md) - add your first profile today
-- [Module Proposal](documents/MESA-Module.md) - architecture and integration guide for this library
+- [MESA Overview](documents/MESA-Overview.md) - the problem MESA solves, in plain terms
+- [Getting Started](documents/MESA-Getting-Started.md) - write your first profile
+- [Specification](documents/MESA-Specification.md) - the full normative reference
+- [Enrichment](documents/MESA-Enrichment.md) - optional advanced domains
+- [Module Proposal](documents/MESA-Module.md) - how this library is built
 
-The canonical machine-readable schemas ship in the package: `mesa_core/schemas/mesa_profile.schema.json` and `mesa_core/schemas/mesa_tools.schema.json`.
+## Status
 
-## Conformance
-
-mesa-core v1.0 implements MESA Levels 1 and 2 in full and the core of Level 3: the retrieval API tools, enforcement (including the Spec 6.6 confirmation challenge/token round-trip), inheritance and conflict resolution (Rules A-E), privacy enforcement with audit logging, the TriggerValidator, and profile migration. The lease protocol ships in v1.1.
+mesa-core v1.0 is ready for use: profile storage and inheritance, enforcement with confirmation, the MCP retrieval tools, and privacy controls are all implemented.
 
 ```bash
 git clone https://github.com/sfox38/mesa-core
 cd mesa-core
 pip install -e ".[dev]"
-pytest tests/ -v       # conformance suite
-ruff check . && mypy   # quality gates
+pytest tests/ -v       # test suite
+ruff check . && mypy   # lint and type check
 ```
-
