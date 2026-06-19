@@ -42,7 +42,7 @@ def test_sidecar_defaults_to_developer_origin(tmp_path: Path) -> None:
     assert profile is not None
     assert profile.entity_id == "my_lights"
     assert profile.metadata.source == MetadataOrigin.DEVELOPER
-    assert profile.inheritance_scope == "domain"
+    assert profile.inheritance_scope == "integration"
 
 
 def test_explicit_origin_in_sidecar_wins(tmp_path: Path) -> None:
@@ -71,12 +71,16 @@ def test_malformed_sidecar_raises(tmp_path: Path) -> None:
         import_from_integration(path)
 
 
-def test_imported_profile_feeds_domain_inheritance(tmp_path: Path) -> None:
+def test_imported_profile_feeds_integration_inheritance_via_domain_fallback(
+    tmp_path: Path,
+) -> None:
+    # Domain-defining integration (directory name "light" == HA domain): with no
+    # get_entity_integration callback, the integration level falls back to the
+    # entity's HA domain and the sidecar still governs light.* (Spec 5.6).
     path = write_integration(tmp_path, "light", SIDECAR)
     profile = import_from_integration(path)
     assert profile is not None
     store = ProfileStore(backend=MemoryBackend())
-    store.set_domain_profile(profile.entity_id, profile)
+    store.set_integration_profile(profile.entity_id, profile)
     effective = store.get_effective("light.from_this_integration")
-    # Developer-declared autonomous flows through domain inheritance.
     assert effective.operational_boundaries.control_mode == ControlMode.AUTONOMOUS

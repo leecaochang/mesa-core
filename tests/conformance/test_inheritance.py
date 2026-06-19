@@ -124,6 +124,74 @@ def test_baseline_applies_to_unprofiled_entities() -> None:
     )
 
 
+def test_device_integration_sidecar_governs_its_entities() -> None:
+    # Headline case (Spec 5.6): a lock vendor's sidecar governs the lock.* entity
+    # it created, resolved via the host's entity-to-integration mapping.
+    store = make_store(get_entity_integration=lambda eid: "yale_access_bluetooth")
+    store.set_integration_profile(
+        "yale_access_bluetooth",
+        make_profile(
+            "yale_access_bluetooth", origin="developer", boundaries={"control_mode": "prohibited"}
+        ),
+    )
+    explanation = store._default_resolver().explain("lock.front_door")
+    assert (
+        explanation.effective_profile.operational_boundaries.control_mode == ControlMode.PROHIBITED
+    )
+    # Sourced from the integration level, not the baseline (which is also prohibited).
+    levels = {e.field_path: e.provided_by_level for e in explanation.explanation}
+    assert levels["operational_boundaries.control_mode"] == "integration"
+
+
+def test_device_integration_inert_without_entity_integration_callback() -> None:
+    # No mapping: the integration level falls back to the HA domain ("media_player"),
+    # which never equals the device integration's name, so the sidecar is inert.
+    store = make_store()
+    store.set_integration_profile(
+        "sonos",
+        make_profile("sonos", origin="developer", boundaries={"reversibility_cost": "high"}),
+    )
+    effective = store.get_effective("media_player.living_room")
+    assert effective.operational_boundaries.reversibility_cost is None
+
+
+def test_integration_overrides_domain_level() -> None:
+    store = make_store(get_entity_integration=lambda eid: "yale_access_bluetooth")
+    store.set_domain_profile(
+        "lock", make_profile("lock", origin="developer", boundaries={"reversibility_cost": "none"})
+    )
+    store.set_integration_profile(
+        "yale_access_bluetooth",
+        make_profile(
+            "yale_access_bluetooth", origin="developer", boundaries={"reversibility_cost": "high"}
+        ),
+    )
+    explanation = store._default_resolver().explain("lock.front_door")
+    assert explanation.effective_profile.operational_boundaries.reversibility_cost == "high"
+    levels = {e.field_path: e.provided_by_level for e in explanation.explanation}
+    assert levels["operational_boundaries.reversibility_cost"] == "integration"
+
+
+def test_area_overrides_integration_level() -> None:
+    store = make_store(
+        get_entity_area=lambda eid: "area.hallway",
+        get_entity_integration=lambda eid: "yale_access_bluetooth",
+    )
+    store.set_integration_profile(
+        "yale_access_bluetooth",
+        make_profile(
+            "yale_access_bluetooth", origin="developer", boundaries={"reversibility_cost": "high"}
+        ),
+    )
+    store.set_area_profile(
+        "area.hallway", make_profile("area.hallway", boundaries={"reversibility_cost": "moderate"})
+    )
+    explanation = store._default_resolver().explain("lock.front_door")
+    assert explanation.effective_profile.operational_boundaries.reversibility_cost == "moderate"
+    levels = {e.field_path: e.provided_by_level for e in explanation.explanation}
+    assert levels["operational_boundaries.reversibility_cost"] == "area"
+
+
 def test_deployment_defaults_replace_baseline() -> None:
     store = make_store()
     store.set_deployment_defaults(
