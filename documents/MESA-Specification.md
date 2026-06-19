@@ -217,8 +217,8 @@ When absent, agents MUST default to `confirm`. There is no silent autonomous def
 
 **`control_mode` field precedence across profile layers.** When `control_mode` is declared in multiple locations, the following precedence order applies from lowest to highest:
 
-1. `capability_semantics.control_mode` in integration profile (integration-level default, lowest authority)
-2. `operational_boundaries.control_mode` in domain-level profile distributed with the integration (`mesa_profile.json` sidecar)
+1. `capability_semantics.control_mode` in the integration profile (capability-level hint, lowest authority)
+2. `operational_boundaries.control_mode` in the integration's distributed profile (integration-level default, the `mesa_profile.json` sidecar)
 3. `operational_boundaries.control_mode` in area-level profile
 4. `operational_boundaries.control_mode` in entity-level profile (highest authority)
 
@@ -272,7 +272,7 @@ MESA is additive. Systems that do not expose `semantic_profile` remain fully con
 | `metadata_origin` | `object` | RECOMMENDED | Profile provenance. See Section 5.3. When absent, the default depends on the profile's location: profiles loaded from an integration's `mesa_profile.json` default to `source: developer`; profiles from any other location default to `source: unknown`. See Section 5.3. |
 | `semantic_tags` | `array<string>` | RECOMMENDED | Namespaced tags classifying this component. See Appendix A. |
 | `last_updated` | `string` | SHOULD | ISO 8601 timestamp of most recent modification. |
-| `inheritance_scope` | `enum` | RECOMMENDED | How this profile applies in the inheritance hierarchy. `entity` (applies to this entity only, default), `domain` (applies to all entities from this integration), `area` (applies to all entities assigned to this area). See Section 5.6. |
+| `inheritance_scope` | `enum` | RECOMMENDED | How this profile applies in the inheritance hierarchy. `entity` (applies to this entity only, default), `domain` (applies to all entities of one HA entity domain, e.g. all `lock.*`), `integration` (applies to all entities created by one integration; the `mesa_profile.json` sidecar default), `area` (applies to all entities assigned to this area). See Section 5.6. |
 | `profile_valid_for` | `object` | MAY | Conditions under which this profile should be reviewed. See Section 5.5. |
 
 ### 5.3 Metadata Origin Schema
@@ -368,13 +368,16 @@ When an invalidation trigger fires, a host MCP server SHOULD surface a warning. 
 
 ### 5.6 Profile Inheritance
 
-MESA profiles follow a three-level inheritance hierarchy. This reduces per-entity authoring burden significantly: an operator or developer can declare defaults that apply to many entities at once, and override only where needed.
+MESA profiles follow a four-level inheritance hierarchy. This reduces per-entity authoring burden significantly: an operator or developer can declare defaults that apply to many entities at once, and override only where needed.
 
 **Hierarchy (lowest to highest precedence):**
 
-1. **Domain-level defaults** - declared in an integration's distributed profile (`mesa_profile.json` sidecar, Section 8). Apply to all entities created by that integration unless overridden.
-2. **Area-level defaults** - declared in an area's spatial profile `operational_boundaries`. Apply to all entities assigned to that area unless overridden.
-3. **Entity-level profile** - declared directly on an entity. Takes full precedence over domain and area defaults for all fields present, subject to the trust-tier rule (Rule D, Section 5.7) and the field-specific Rules A through C.
+1. **Domain-level defaults** - apply to all entities of one HA entity domain (for example all `lock.*` entities), regardless of which integration created them. These are operator-authored cross-integration defaults; the `deployment_defaults` floor and the built-in safety baseline of Section 5.8 also act at this level. Resolved by an entity's HA domain.
+2. **Integration-level defaults** - declared in an integration's distributed profile (`mesa_profile.json` sidecar, Section 8). Apply to all entities that integration created, across whatever HA domains those entities fall under (a hub integration's `lock.*`, `sensor.*`, and `binary_sensor.*` entities alike). More specific than a domain default, because an integration author knows their own devices more precisely than a generic per-domain rule can. Resolved by mapping each entity to the integration that created it (see below).
+3. **Area-level defaults** - declared in an area's spatial profile `operational_boundaries`. Apply to all entities assigned to that area unless overridden.
+4. **Entity-level profile** - declared directly on an entity. Takes full precedence over domain, integration, and area defaults for all fields present, subject to the trust-tier rule (Rule D, Section 5.7) and the field-specific Rules A through C.
+
+**Resolving the integration level.** Mapping an entity to the integration that created it is host knowledge; it cannot be derived from the entity ID, which carries only the HA domain. A conforming host SHOULD provide this mapping (in Home Assistant, an entity's config entry identifies its integration). A host that cannot provide it falls back to applying an integration-scoped profile only to entities whose HA domain equals the integration's directory name. That fallback covers domain-defining integrations (`light`, `lock`, `cover`, and similar core components whose directory name is an entity domain) and leaves device and hub integration profiles unresolved. This is the conservative status quo, not a new risk: an unresolved profile grants nothing.
 
 **Inheritance rules:**
 
@@ -393,7 +396,7 @@ MESA profiles follow a three-level inheritance hierarchy. This reduces per-entit
   "semantic_profile": {
     "schema_version": "1.0",
     "metadata_origin": {"source": "developer", "confidence": 1.0},
-    "inheritance_scope": "domain",
+    "inheritance_scope": "integration",
     "semantic_tags": ["lighting.ambient"],
     "operational_boundaries": {
       "control_mode": "autonomous",
@@ -406,7 +409,7 @@ MESA profiles follow a three-level inheritance hierarchy. This reduces per-entit
 }
 ```
 
-The `inheritance_scope` field tells host implementations how to apply this profile. Valid values: `entity` (applies to this entity only, default), `domain` (applies to all entities from this integration), `area` (applies to all entities assigned to this area).
+The `inheritance_scope` field tells host implementations how to apply this profile. Valid values: `entity` (applies to this entity only, default), `domain` (applies to all entities of one HA entity domain), `integration` (applies to all entities created by one integration), `area` (applies to all entities assigned to this area).
 
 ### 5.7 Global Profile Conflict Resolution
 
@@ -424,7 +427,7 @@ If any profile at any level declares `triggers_automations: likely` for an entit
 When multiple profiles declare `privacy_classification.level` for the same entity, the most restrictive level applies. `restricted` beats `sensitive` beats `normal` beats `public` regardless of origin authority.
 
 **Rule D: Scope precedence with origin tiebreak for all other fields.**
-For all fields not covered by Rules A, B, or C, resolution proceeds in two tiers. Within the trusted tier (`developer`, `user`, `hybrid`), the most specific scope wins: `entity` > `area` > `domain`. Where scope is equal, origin authority decides: `developer` > `user` > `hybrid`. Profiles of `inferred_ai` or `unknown` origin form a lower tier: they never override a field explicitly declared by any trusted-tier profile at any scope, consistent with Rule 7 (Section 5.4). When a field is declared only in the lower tier, the same scope-then-origin rule applies within it (`inferred_ai` > `unknown`). This preserves operator sovereignty (an operator's entity-level declaration beats a developer's domain-level default) while ensuring inferred and unattributed profiles can fill gaps but never displace explicit human or developer declarations.
+For all fields not covered by Rules A, B, or C, resolution proceeds in two tiers. Within the trusted tier (`developer`, `user`, `hybrid`), the most specific scope wins: `entity` > `area` > `integration` > `domain`. Where scope is equal, origin authority decides: `developer` > `user` > `hybrid`. Profiles of `inferred_ai` or `unknown` origin form a lower tier: they never override a field explicitly declared by any trusted-tier profile at any scope, consistent with Rule 7 (Section 5.4). When a field is declared only in the lower tier, the same scope-then-origin rule applies within it (`inferred_ai` > `unknown`). This preserves operator sovereignty (an operator's entity-level declaration beats a developer's domain-level default) while ensuring inferred and unattributed profiles can fill gaps but never displace explicit human or developer declarations.
 
 **Rule D, array-valued safety fields.** `declared_limits` and `temporal_constraints` are the exception to the replacement behaviour above: they are unioned across inheritance levels, not replaced. Each entry is an independent constraint identified by its `id`, and conforming consumers apply every entry, so the union is tightest-wins at evaluation time. The effective array is the union of all entries declared at every level. When the same `id` is declared at more than one level, that single entry is resolved by the standard Rule D precedence (trusted tier first, then most specific scope, then origin authority): a lower-tier entry MUST NOT displace a trusted entry with the same `id`, and a trusted profile at a more specific scope MAY deliberately override one inherited entry by reusing its `id`. Because entries only ever tighten, a more specific profile cannot silently drop an inherited safety limit by declaring an unrelated one. Removing an inherited entry therefore requires overriding it by `id`; there is no wholesale array replacement.
 
@@ -855,7 +858,7 @@ A conforming agent with caller context MUST apply `access_roles` before acting o
 
 Integration profiles are authored by developers and distributed with the integration as a sidecar file named `mesa_profile.json`, placed in the integration directory. The file contains the `semantic_profile` and `privacy_classification` root objects, and optionally a `diagnostic_profile`. Because it travels inside the integration directory, it ships through normal distribution channels (HACS, manual install) without modifying any file that HA tooling validates.
 
-**Data flow:** the host MCP server is responsible for extracting integration profiles at startup and writing them to the `ProfileStore` with `inheritance_scope: domain`. mesa-core provides `import_from_integration(integration_path)` to automate this: it reads the integration's `mesa_profile.json`. Profiles in `mesa_profile.json` that omit `metadata_origin` default to `source: developer` (Section 5.3).
+**Data flow:** the host MCP server is responsible for extracting integration profiles at startup and writing them to the `ProfileStore` with `inheritance_scope: integration`. mesa-core provides `import_from_integration(integration_path)` to automate this: it reads the integration's `mesa_profile.json`. Profiles in `mesa_profile.json` that omit `metadata_origin` default to `source: developer` (Section 5.3). An integration profile applies to every entity that integration created, regardless of HA domain, so the host MUST supply mesa-core with an entity-to-integration mapping for it to resolve (Section 5.6); in Home Assistant this is the entity's config entry. A host that cannot supply the mapping falls back to the domain-defining behaviour of Section 5.6, under which only integrations whose directory name is an HA entity domain take effect. (Earlier revisions stored sidecars with `inheritance_scope: domain`, which by the resolution rules of Section 5.6 only ever matched domain-defining integrations; `integration` scope generalises this to the device and hub integrations that make up most installs.)
 
 **Why not `manifest.json`?** Earlier drafts of this specification distributed integration profiles as a top-level key in `manifest.json`. That path is rejected for two reasons: hassfest (the manifest validator run in most custom integration CI pipelines) rejects unknown keys with `extra keys not allowed`, and embedding foreign keys in a file validated by HA tooling couples MESA's schema evolution to HA's. MESA does not use `manifest.json`.
 
@@ -1075,7 +1078,7 @@ When `is_authenticated` is `false`, agents MUST treat the caller as having no ro
 |---|---|---|---|
 | `field_path` | `string` | Yes | Dot-notation path to the resolved field (e.g. `operational_boundaries.control_mode`, `privacy_classification.level`). |
 | `effective_value` | `any` | Yes | The resolved value after inheritance and conflict resolution. |
-| `provided_by_level` | `enum` | Yes | The profile level that contributed this value: `entity`, `area`, `domain`, `deployment_default`, or `built_in_baseline`. |
+| `provided_by_level` | `enum` | Yes | The profile level that contributed this value: `entity`, `area`, `integration`, `domain`, `deployment_default`, or `built_in_baseline`. |
 | `provided_by_origin` | `enum` | Yes | The origin authority of the contributing profile: `developer`, `user`, `hybrid`, `inferred_ai`, or `unknown`. |
 | `conflict` | `boolean` | Yes | Whether multiple levels declared values for this field. |
 | `conflict_resolution` | `string` | No | Present when `conflict` is true. Human-readable description of which rule resolved the conflict (e.g. "Rule A: tightening applied - area declared confirm over domain autonomous"). |

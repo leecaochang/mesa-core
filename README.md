@@ -1,5 +1,5 @@
 
-# mesa-core.
+# mesa-core
 
 [![CI](https://github.com/sfox38/mesa-core/actions/workflows/ci.yml/badge.svg)](https://github.com/sfox38/mesa-core/actions/workflows/ci.yml)
 
