@@ -474,3 +474,23 @@ def test_effective_tags_are_union_across_levels() -> None:
         Layer("domain", make_profile("light", origin="developer", tags=["lighting.ambient", "lighting.task"])),
     )
     assert set(effective.semantic_tags) == {"lighting.task", "lighting.ambient"}
+
+
+# ------------------------------------------------------ merge() two-profile convenience
+
+
+def test_merge_higher_authority_wins_rule_d_field() -> None:
+    # merge() treats the first profile as the more specific scope (entity over domain).
+    higher = make_profile("light.x", origin="user", boundaries={"reversibility_cost": "high"})
+    lower = make_profile("light", origin="developer", boundaries={"reversibility_cost": "none"})
+    merged = ConflictResolver().merge(higher, lower)
+    assert merged.operational_boundaries.reversibility_cost == "high"
+
+
+def test_merge_preserves_tightening_regardless_of_authority() -> None:
+    # Rule A still wins: the lower profile's prohibited is preserved even though the
+    # higher profile is the more specific scope and declares autonomous.
+    higher = make_profile("light.x", origin="user", boundaries={"control_mode": "autonomous"})
+    lower = make_profile("light", origin="developer", boundaries={"control_mode": "prohibited"})
+    merged = ConflictResolver().merge(higher, lower)
+    assert merged.operational_boundaries.control_mode == ControlMode.PROHIBITED
