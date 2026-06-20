@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from mesa_core.backends import MemoryBackend
 from mesa_core.inheritance import InheritanceResolver
 from mesa_core.profile import ControlMode, PrivacyLevel, SemanticProfile, TriggersAutomations
@@ -276,3 +278,28 @@ def test_effective_profile_serialises() -> None:
     out = effective.to_dict()
     assert out["semantic_profile"]["operational_boundaries"]["control_mode"] == "autonomous"
     assert isinstance(effective, SemanticProfile)
+
+
+def test_resolve_reuses_prefetched_entity_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    # OPT-2a: a caller that already loaded the entity profile passes it in, and
+    # the resolver must not re-read the entity layer from the store.
+    store = make_store()
+    store.set("light.x", make_profile("light.x", boundaries={"control_mode": "autonomous"}))
+    resolver = InheritanceResolver(store=store)
+    stored = store.get("light.x")
+
+    reads: list[str] = []
+    original_get = store.get
+
+    def counting_get(entity_id: str) -> SemanticProfile | None:
+        reads.append(entity_id)
+        return original_get(entity_id)
+
+    monkeypatch.setattr(store, "get", counting_get)
+    effective = resolver.resolve("light.x", entity_profile=stored)
+    assert effective.operational_boundaries.control_mode == ControlMode.AUTONOMOUS
+    assert "light.x" not in reads  # entity layer was not re-read
+
+    reads.clear()
+    resolver.resolve("light.x")
+    assert "light.x" in reads  # control: re-read when not pre-fetched

@@ -336,7 +336,7 @@ class ProfileStore:
                 continue
             effective: SemanticProfile | None = None
             if filter_needs_resolution:
-                effective = resolver.resolve(key)
+                effective = resolver.resolve(key, entity_profile=stored)
                 effective_tags = set(effective.semantic_tags)
                 if tags:
                     if tags_match == "all" and not set(tags) <= effective_tags:
@@ -357,10 +357,11 @@ class ProfileStore:
         offset = _decode_cursor(cursor, fingerprint) if cursor else 0
         page = matched[offset : offset + limit]
         has_more = offset + limit < len(matched)
-        # OPT: resolve only the returned page when filtering did not already.
+        # OPT: resolve only the returned page when filtering did not already,
+        # reusing the stored profile each row already holds.
         for row in page:
             if row.effective is None:
-                row.effective = resolver.resolve(row.entity_id)
+                row.effective = resolver.resolve(row.entity_id, entity_profile=row.stored)
         next_cursor = _encode_cursor(offset + limit, fingerprint) if has_more else None
         return ProfileQueryResult(
             rows=page,
