@@ -139,19 +139,32 @@ def test_find_orphans(backend: StorageBackend) -> None:
     assert orphans == ["light.renamed"]
 
 
-def test_list_filters() -> None:
+def test_query_filters() -> None:
     store = ProfileStore(backend=MemoryBackend(), get_entity_area=lambda eid: "area.living_room")
     store.set("light.a", _profile("light.a"))
     store.set("light.b", _profile("light.b", semantic_tags=["lighting.task"]))
     store.set("switch.c", _profile("switch.c"))
 
-    assert {p.entity_id for p in store.list(domain="light").profiles} == {"light.a", "light.b"}
-    assert {p.entity_id for p in store.list(tags=["lighting.task"]).profiles} == {"light.b"}
-    assert store.list(areas=["area.living_room"]).total_matched == 3
-    assert store.list(areas=["area.elsewhere"]).total_matched == 0
+    assert {p.entity_id for p in store.query(domains=["light"]).profiles} == {"light.a", "light.b"}
+    assert {p.entity_id for p in store.query(tags=["lighting.task"]).profiles} == {"light.b"}
+    assert store.query(areas=["area.living_room"]).total_matched == 3
+    assert store.query(areas=["area.elsewhere"]).total_matched == 0
 
 
-def test_list_excludes_untrusted_by_default() -> None:
+def test_query_matches_effective_inherited_tags() -> None:
+    # Spec 9.2: tag filters evaluate the effective resolved tag set, so a tag
+    # inherited from a domain profile makes an entity match even though its own
+    # stored profile does not declare it. (The old list() matched stored tags.)
+    store = ProfileStore(backend=MemoryBackend())
+    store.set_domain_profile("light", _profile("light", semantic_tags=["lighting.scene"]))
+    store.set("light.x", _profile("light.x", semantic_tags=[]))
+    result = store.query(tags=["lighting.scene"])
+    assert {row.entity_id for row in result.rows} == {"light.x"}
+    assert result.rows[0].effective is not None
+    assert "lighting.scene" in result.rows[0].effective.semantic_tags
+
+
+def test_query_excludes_untrusted_by_default() -> None:
     store = ProfileStore(backend=MemoryBackend())
     store.set("light.user", _profile("light.user"))
     inferred = SemanticProfile.from_dict(
@@ -170,12 +183,12 @@ def test_list_excludes_untrusted_by_default() -> None:
     unknown = SemanticProfile.from_dict("light.unknown", {"semantic_profile": {}})
     store.set("light.unknown", unknown)
 
-    default = store.list()
+    default = store.query()
     assert {p.entity_id for p in default.profiles} == {"light.user"}
-    included = store.list(include_inferred=True)
+    included = store.query(include_inferred=True)
     assert included.total_matched == 3
     # An explicit origin filter implies inclusion.
-    only_inferred = store.list(origin="inferred_ai")
+    only_inferred = store.query(origin="inferred_ai")
     assert {p.entity_id for p in only_inferred.profiles} == {"light.inferred"}
 
 
@@ -183,13 +196,13 @@ def test_pagination_cursor_round_trip() -> None:
     store = ProfileStore(backend=MemoryBackend())
     for i in range(7):
         store.set(f"light.l{i}", _profile(f"light.l{i}"))
-    first = store.list(limit=3)
+    first = store.query(limit=3)
     assert [p.entity_id for p in first.profiles] == ["light.l0", "light.l1", "light.l2"]
     assert first.total_matched == 7 and first.has_more and first.next_cursor
 
-    second = store.list(limit=3, cursor=first.next_cursor)
+    second = store.query(limit=3, cursor=first.next_cursor)
     assert [p.entity_id for p in second.profiles] == ["light.l3", "light.l4", "light.l5"]
-    third = store.list(limit=3, cursor=second.next_cursor)
+    third = store.query(limit=3, cursor=second.next_cursor)
     assert [p.entity_id for p in third.profiles] == ["light.l6"]
     assert not third.has_more and third.next_cursor is None
 
@@ -198,25 +211,25 @@ def test_cursor_invalidated_by_profile_changes() -> None:
     store = ProfileStore(backend=MemoryBackend())
     for i in range(5):
         store.set(f"light.l{i}", _profile(f"light.l{i}"))
-    page = store.list(limit=2)
+    page = store.query(limit=2)
     store.set("light.new", _profile("light.new"))  # changes the store fingerprint
     with pytest.raises(InvalidCursorError):
-        store.list(limit=2, cursor=page.next_cursor)
+        store.query(limit=2, cursor=page.next_cursor)
 
 
 def test_malformed_cursor_rejected() -> None:
     store = ProfileStore(backend=MemoryBackend())
     store.set("light.a", _profile("light.a"))
     with pytest.raises(InvalidCursorError):
-        store.list(cursor="not-a-cursor")
+        store.query(cursor="not-a-cursor")
 
 
 def test_bulk_operations() -> None:
     store = ProfileStore(backend=MemoryBackend())
     store.set_many({f"light.l{i}": _profile(f"light.l{i}") for i in range(3)})
-    assert store.list().total_matched == 3
+    assert store.query().total_matched == 3
     store.delete_many(["light.l0", "light.l2"])
-    assert {p.entity_id for p in store.list().profiles} == {"light.l1"}
+    assert {p.entity_id for p in store.query().profiles} == {"light.l1"}
 
 
 def test_async_variants() -> None:
@@ -225,7 +238,7 @@ def test_async_variants() -> None:
         await store.aset("light.x", _profile("light.x"))
         loaded = await store.aget("light.x")
         assert loaded is not None and loaded.entity_id == "light.x"
-        result = await store.alist(domain="light")
+        result = await store.aquery(domains=["light"])
         assert result.total_matched == 1
         assert await store.afind_orphans(["other.entity"]) == ["light.x"]
         await store.adelete("light.x")

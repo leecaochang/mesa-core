@@ -288,8 +288,8 @@ store.set("light.living_room_ceiling", profile)
 # Delete a profile
 store.delete("light.living_room_ceiling")
 
-# List all profiles with optional filtering
-profiles = store.list(domain="light", tags=["lighting.ambient"])
+# Query profiles with optional filtering (matches effective resolved tags)
+result = store.query(domains=["light"], tags=["lighting.ambient"])
 
 # Get deployment defaults
 defaults = store.get_deployment_defaults()
@@ -318,14 +318,18 @@ class ProfileStore:
     def entity_keys(self) -> List[str]: ...
     def domain_keys(self) -> List[str]: ...
     def area_keys(self) -> List[str]: ...
-    def list(self,
-             domain: Optional[str] = None,
-             tags: Optional[List[str]] = None,
-             areas: Optional[List[str]] = None,
-             origin: Optional[str] = None,
-             include_inferred: bool = False,
-             limit: int = 50,
-             cursor: Optional[str] = None) -> ProfileQueryResult: ...
+    def query(self, *,
+              domains: Optional[List[str]] = None,
+              tags: Optional[List[str]] = None,
+              tags_match: str = "any",
+              areas: Optional[List[str]] = None,
+              intents: Optional[List[str]] = None,
+              include_inferred: bool = False,
+              origin: Optional[str] = None,
+              min_origin_authority: Optional[str] = None,
+              limit: int = 50,
+              cursor: Optional[str] = None,
+              resolver: Optional[InheritanceResolver] = None) -> ProfileQueryResult: ...
     def get_deployment_defaults(self) -> DeploymentDefaults: ...
     def set_deployment_defaults(self, defaults: dict) -> None: ...
     def explain(self, entity_id: str) -> ProfileExplanation: ...
@@ -336,7 +340,7 @@ class ProfileStore:
     async def aget_effective(self, entity_id: str) -> SemanticProfile: ...
     async def aset(self, entity_id: str, profile: SemanticProfile) -> None: ...
     async def adelete(self, entity_id: str) -> None: ...
-    async def alist(self, **kwargs) -> ProfileQueryResult: ...
+    async def aquery(self, **kwargs) -> ProfileQueryResult: ...
     async def aset_many(self, profiles: Dict[str, SemanticProfile]) -> None: ...
     async def adelete_many(self, entity_ids: List[str]) -> None: ...
     async def aexplain(self, entity_id: str) -> ProfileExplanation: ...
@@ -712,8 +716,8 @@ If `enforcer` is not provided, the enforcement-related tools are not registered.
 
 **mesa_query_profiles**
 
-Input: domain filter, tag filter, area filter, origin filter, include_inferred flag, limit, cursor.
-Action: calls `store.list()` with filters, resolves effective profiles, returns paginated results.
+Input: domain filter, tag filter, area filter, intents, min_origin_authority, include_inferred flag, include_fields, limit, cursor.
+Action: calls `store.query()` (passing the resolver), which applies filters against effective resolved profiles and returns paginated results; formats them into the response envelope.
 Output: results array, total_matched, pagination metadata, caller_context if available.
 
 **mesa_get_profile**

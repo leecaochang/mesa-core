@@ -24,7 +24,7 @@ from mesa_core.profile import (
     SemanticProfile,
     TriggersAutomations,
 )
-from mesa_core.store import DeploymentDefaults, ProfileQueryResult, ProfileStore
+from mesa_core.store import DeploymentDefaults, ProfileQueryResult, ProfileStore, QueryRow
 from mesa_core.temporal import TemporalEvaluator, TemporalResult
 from mesa_core.trigger_validator import (
     TriggerValidator,
@@ -60,6 +60,7 @@ __all__ = [
     "ProfileMetadata",
     "ProfileQueryResult",
     "ProfileStore",
+    "QueryRow",
     "SemanticProfile",
     "TemporalEvaluator",
     "TemporalResult",
