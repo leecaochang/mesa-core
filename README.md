@@ -2,6 +2,7 @@
 # mesa-core
 
 [![CI](https://github.com/sfox38/mesa-core/actions/workflows/ci.yml/badge.svg)](https://github.com/sfox38/mesa-core/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/mesa-core.svg)](https://pypi.org/project/mesa-core/)
 
 mesa-core decides whether an AI agent should be allowed to act on a smart-home device, and how cautious it should be about it.
 
