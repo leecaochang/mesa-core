@@ -241,17 +241,48 @@ def test_async_variants() -> None:
         result = await store.aquery(domains=["light"])
         assert result.total_matched == 1
         assert await store.afind_orphans(["other.entity"]) == ["light.x"]
+        explanation = await store.aexplain("light.x")
+        assert explanation.entity_id == "light.x"
         await store.adelete("light.x")
         assert await store.aget("light.x") is None
 
-        store.set_domain_profile("light", _profile("light"))
-        store.set_area_profile("area.bedroom", _profile("area.bedroom"))
+        # Scope profiles round-trip through the async variants alone.
+        await store.aset_domain_profile("light", _profile("light"))
+        await store.aset_integration_profile("hue", _profile("hue"))
+        await store.aset_area_profile("area.bedroom", _profile("area.bedroom"))
+        domain = await store.aget_domain_profile("light")
+        assert domain is not None and domain.inheritance_scope == "domain"
+        integration = await store.aget_integration_profile("hue")
+        assert integration is not None and integration.inheritance_scope == "integration"
+        area = await store.aget_area_profile("area.bedroom")
+        assert area is not None and area.inheritance_scope == "area"
+        assert await store.aentity_keys() == []
+        assert await store.adomain_keys() == ["light"]
+        assert await store.aintegration_keys() == ["hue"]
+        assert await store.aarea_keys() == ["area.bedroom"]
+
+        await store.aset_deployment_defaults(
+            {"deployment_defaults": {"default_control_mode": "prohibited"}}
+        )
+        defaults = await store.aget_deployment_defaults()
+        assert defaults is not None and defaults.default_control_mode == ControlMode.PROHIBITED
+
         await store.adelete_domain_profile("light")
+        await store.adelete_integration_profile("hue")
         await store.adelete_area_profile("area.bedroom")
         assert store.get_domain_profile("light") is None
+        assert store.get_integration_profile("hue") is None
         assert store.get_area_profile("area.bedroom") is None
 
     asyncio.run(run())
+
+
+def test_store_explain_delegates_to_resolver() -> None:
+    store = ProfileStore(backend=MemoryBackend())
+    store.set("light.x", _profile("light.x"))
+    explanation = store.explain("light.x")
+    assert explanation.entity_id == "light.x"
+    assert explanation.effective_profile.entity_id == "light.x"
 
 
 def test_stored_document_matches_fixture_round_trip(tmp_path: Path) -> None:

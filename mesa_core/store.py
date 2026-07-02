@@ -27,7 +27,7 @@ from mesa_core.profile import (
 )
 
 if TYPE_CHECKING:
-    from mesa_core.inheritance import InheritanceResolver
+    from mesa_core.inheritance import InheritanceResolver, ProfileExplanation
 
 _DEPLOYMENT_DEFAULTS_KEY = "__deployment_defaults__"
 _DOMAIN_PREFIX = "__domain__:"
@@ -393,6 +393,13 @@ class ProfileStore:
         """
         return self._default_resolver().resolve(entity_id)
 
+    def explain(self, entity_id: str) -> ProfileExplanation:
+        """Per-field provenance of the effective profile (Spec 9.5).
+
+        Delegates to the attached (or default) resolver's ``explain``.
+        """
+        return self._default_resolver().explain(entity_id)
+
     # -- async variants -------------------------------------------------------------
 
     async def aget(self, entity_id: str) -> SemanticProfile | None:
@@ -404,11 +411,42 @@ class ProfileStore:
     async def adelete(self, entity_id: str) -> None:
         await asyncio.to_thread(self.delete, entity_id)
 
+    async def aget_domain_profile(self, domain: str) -> SemanticProfile | None:
+        return await asyncio.to_thread(self.get_domain_profile, domain)
+
+    async def aset_domain_profile(self, domain: str, profile: SemanticProfile) -> None:
+        await asyncio.to_thread(self.set_domain_profile, domain, profile)
+
     async def adelete_domain_profile(self, domain: str) -> None:
         await asyncio.to_thread(self.delete_domain_profile, domain)
 
+    async def aget_integration_profile(self, integration: str) -> SemanticProfile | None:
+        return await asyncio.to_thread(self.get_integration_profile, integration)
+
+    async def aset_integration_profile(
+        self, integration: str, profile: SemanticProfile
+    ) -> None:
+        await asyncio.to_thread(self.set_integration_profile, integration, profile)
+
+    async def adelete_integration_profile(self, integration: str) -> None:
+        await asyncio.to_thread(self.delete_integration_profile, integration)
+
+    async def aget_area_profile(self, area_id: str) -> SemanticProfile | None:
+        return await asyncio.to_thread(self.get_area_profile, area_id)
+
+    async def aset_area_profile(self, area_id: str, profile: SemanticProfile) -> None:
+        await asyncio.to_thread(self.set_area_profile, area_id, profile)
+
     async def adelete_area_profile(self, area_id: str) -> None:
         await asyncio.to_thread(self.delete_area_profile, area_id)
+
+    async def aget_deployment_defaults(self) -> DeploymentDefaults | None:
+        return await asyncio.to_thread(self.get_deployment_defaults)
+
+    async def aset_deployment_defaults(
+        self, defaults: DeploymentDefaults | dict[str, Any]
+    ) -> None:
+        await asyncio.to_thread(self.set_deployment_defaults, defaults)
 
     async def aset_many(self, profiles: dict[str, SemanticProfile]) -> None:
         await asyncio.to_thread(self.set_many, profiles)
@@ -416,11 +454,26 @@ class ProfileStore:
     async def adelete_many(self, entity_ids: list[str]) -> None:
         await asyncio.to_thread(self.delete_many, entity_ids)
 
+    async def aentity_keys(self) -> list[str]:
+        return await asyncio.to_thread(self.entity_keys)
+
+    async def adomain_keys(self) -> list[str]:
+        return await asyncio.to_thread(self.domain_keys)
+
+    async def aintegration_keys(self) -> list[str]:
+        return await asyncio.to_thread(self.integration_keys)
+
+    async def aarea_keys(self) -> list[str]:
+        return await asyncio.to_thread(self.area_keys)
+
     async def aquery(self, **kwargs: Any) -> ProfileQueryResult:
         return await asyncio.to_thread(lambda: self.query(**kwargs))
 
     async def aget_effective(self, entity_id: str) -> SemanticProfile:
         return await asyncio.to_thread(self.get_effective, entity_id)
+
+    async def aexplain(self, entity_id: str) -> ProfileExplanation:
+        return await asyncio.to_thread(self.explain, entity_id)
 
     async def afind_orphans(self, known_entity_ids: Iterable[str]) -> list[str]:
         return await asyncio.to_thread(self.find_orphans, known_entity_ids)
