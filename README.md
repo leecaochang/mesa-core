@@ -76,6 +76,8 @@ register_mesa_tools(store, adapter="fastmcp", server=app)
 
 Adapters ship for FastMCP and the MCP Python SDK (`pip install "mesa-core[fastmcp]"` or `"mesa-core[mcp]"`). Any other framework can implement a small registration protocol.
 
+Passing `lease_manager=LeaseManager(store)` also registers the advisory coordination tools (`mesa_request_lease`, `mesa_release_lease`), which let cooperating agents signal short-lived intent to each other. They are signals, not locks; see Enrichment Section 21 before relying on them.
+
 ## Loading profiles shipped by integrations
 
 An HA integration can ship a `mesa_profile.json` describing its own devices. Load it with:
@@ -98,7 +100,7 @@ if profile is not None:
 
 ## Status
 
-mesa-core v1.0 is ready for use: profile storage and inheritance, enforcement with confirmation, the MCP retrieval tools, and privacy controls are all implemented.
+mesa-core v1.1 is ready for use: profile storage and inheritance, enforcement with confirmation, the MCP retrieval tools, privacy controls, and the advisory lease protocol are all implemented. Multi-agent lease preemption is planned for v2.
 
 ```bash
 git clone https://github.com/sfox38/mesa-core

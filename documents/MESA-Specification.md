@@ -97,7 +97,7 @@ MESA metadata describes the environment. Agents are probabilistic reasoning syst
 
 MESA defines three conformance levels. These levels describe capability tiers that any MCP server can reach by integrating the mesa-core Python module. A host server MUST declare which level it targets.
 
-**Reference implementation.** The mesa-core Python module is the reference implementation of this specification. mesa-core v1 implements Levels 1 and 2 in full and the core of Level 3 (retrieval tools, enforcement, confirmation protocol); lease tools follow in v1.1. MCP server developers integrate mesa-core to gain MESA conformance without reimplementing the specification from scratch. See the mesa-core Module Proposal document for integration details.
+**Reference implementation.** The mesa-core Python module is the reference implementation of this specification. mesa-core v1.1 implements Levels 1 and 2 in full and Level 3 including the retrieval tools, enforcement, the confirmation protocol, and the lease coordination tools (single-agent scope; multi-agent priority preemption per Section 21.6 follows in a later version). MCP server developers integrate mesa-core to gain MESA conformance without reimplementing the specification from scratch. See the mesa-core Module Proposal document for integration details.
 
 **Who conformance applies to.** Conformance levels are declared by host implementations: MCP servers and the libraries they embed. Some requirements in this specification address consuming agents rather than hosts: epistemic weighting, cascade caution, refusal communication. These are normative guidance for agent developers, but they describe probabilistic reasoning behaviour that no test suite can verify. The conformance test suite verifies host behaviour only; requirements addressed to agents are identifiable by their agent-directed language ("Agents MUST...").
 
@@ -362,7 +362,7 @@ Human-authored profiles do not decay but can become stale when the deployment ch
 
 When an invalidation trigger fires, a host MCP server SHOULD surface a warning. It MUST NOT silently discard the profile.
 
-**Live validation of `triggers_automations`.** Automation configurations change frequently. A static `triggers_automations: none` declaration can become stale the moment an operator adds a new automation referencing that entity. Level 2 and Level 3 host implementations SHOULD periodically run a live cross-reference of declared `none` profiles against the actual HA automation registry. Any entity declared `none` that is found in an automation trigger or condition block SHOULD generate a staleness warning surfaced to the operator. The mesa-core module provides `TriggerValidator` for this purpose.
+**Live validation of `triggers_automations`.** Automation configurations change frequently. A static `triggers_automations: none` declaration can become stale the moment an operator adds a new automation referencing that entity. Level 2 and Level 3 host implementations SHOULD periodically run a live cross-reference of declared `none` profiles against the actual HA automation registry. Any entity declared `none` that is found in an automation trigger or condition block SHOULD generate a staleness warning surfaced to the operator. Automations can reference entities indirectly, through device triggers and conditions (`device_id`) and the target selectors of named triggers (`area_id`, `floor_id`, `label_id`, `device_id`); when cross-referencing, hosts SHOULD expand such selectors to their member entities using the HA registries, because raw configuration scanning sees only explicit `entity_id` references. The mesa-core module provides `TriggerValidator` for this purpose.
 
 **Entity renames.** Profiles are keyed by entity ID, and operators rename entities freely. A profile whose entity ID no longer exists in the HA registry is orphaned: it applies to nothing, and the renamed entity silently loses its profile, falling back to domain and area inheritance and deployment defaults. Host servers SHOULD detect orphaned profiles by checking stored keys against the entity registry, at startup and on `entity_registry_updated` events, surface them to the operator, and offer re-keying. Host servers MAY additionally record HA registry unique IDs alongside entity IDs to survive renames automatically.
 
@@ -801,7 +801,7 @@ Privacy classification is cross-cutting. The canonical location is as a sibling 
 | `sensitive` | Agent SHOULD log access. SHOULD NOT expose raw data without operator confirmation. |
 | `restricted` | Agent MUST log access. MUST NOT act autonomously. Operator confirmation REQUIRED. |
 
-A standardised audit event schema for access logging is planned for a future revision. In v1.0, implementations MUST log the required events but MAY use any structured format. See the mesa-core Module Proposal for the planned `mesa_audit_event` schema.
+Implementations MUST log the required events but MAY use any structured format. The `mesa_audit_event` schema defined in the mesa-core Module Proposal (Section 4.11) and emitted by mesa-core v1.1+ is the RECOMMENDED shape; adopting it gives operators one consistent audit stream across implementations.
 
 **Approximate mapping to regulatory frameworks (informational, non-normative):**
 

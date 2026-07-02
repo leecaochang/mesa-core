@@ -312,7 +312,7 @@ Person entities carry the highest inherent privacy sensitivity of any standard H
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `household_role` | `enum` | REQUIRED | `primary_resident`, `secondary_resident`, `child`, `regular_guest`, `temporary_guest`, `caregiver`. |
+| `household_role` | `enum` | RECOMMENDED | `primary_resident`, `secondary_resident`, `child`, `regular_guest`, `temporary_guest`, `caregiver`. |
 | `display_name` | `string` | RECOMMENDED | Human-readable name for audit logs. |
 | `is_minor` | `boolean` | RECOMMENDED | Triggers mandatory `restricted` privacy. |
 | `associated_zones` | `array<string>` | MAY | Significant zone IDs for this person. |

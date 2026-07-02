@@ -40,7 +40,7 @@ This document describes what mesa-core does, how it is structured, how MCP serve
    - 6.2 [Full Integration (Level 3)](#62-full-integration-level-3)
    - 6.3 [Framework Adapters](#63-framework-adapters)
 7. [Conformance Test Suite](#7-conformance-test-suite)
-8. [Version 1 Scope](#8-version-1-scope)
+8. [Version Scope](#8-version-scope)
 9. [Future Versions](#9-future-versions)
 10. [Distribution and Installation](#10-distribution-and-installation)
 11. [Dependencies](#11-dependencies)
@@ -134,7 +134,7 @@ mesa-core/
             memory.py            # In-memory backend (testing and development)
         lease/
             __init__.py
-            manager.py           # LeaseManager: request, release, expire (ships in v1.1)
+            manager.py           # LeaseManager: request, release, expire (mesa-core 1.1+)
             registry.py          # Active lease registry
     tests/
         __init__.py
@@ -240,12 +240,23 @@ class ProfileMetadata:
     profile_valid_for: Optional[Dict[str, Any]] = None
 
 @dataclass
+class PersonTraits:
+    # People semantics (Enrichment Section 17); None / empty list = not declared.
+    household_role: Optional[str] = None
+    display_name: Optional[str] = None
+    is_minor: Optional[bool] = None
+    associated_zones: List[str] = field(default_factory=list)
+    associated_automations: List[str] = field(default_factory=list)
+    presence_entity: Optional[str] = None
+
+@dataclass
 class SemanticProfile:
     entity_id: str
     semantic_tags: List[str] = field(default_factory=list)
     metadata: ProfileMetadata = field(default_factory=ProfileMetadata)
     operational_boundaries: OperationalBoundaries = field(default_factory=OperationalBoundaries)
     privacy_classification: PrivacyClassification = field(default_factory=PrivacyClassification)
+    person_traits: PersonTraits = field(default_factory=PersonTraits)
     inheritance_scope: str = "entity"
     raw: Dict[str, Any] = field(default_factory=dict)
 
@@ -302,21 +313,31 @@ store.set_deployment_defaults(defaults_dict)
 
 ```python
 class ProfileStore:
-    def __init__(self, backend: StorageBackend): ...
+    def __init__(
+        self,
+        backend: StorageBackend,
+        get_entity_area: Optional[Callable[[str], Optional[str]]] = None,
+        get_entity_integration: Optional[Callable[[str], Optional[str]]] = None
+    ): ...
     def get(self, entity_id: str) -> Optional[SemanticProfile]: ...
     def get_effective(self, entity_id: str) -> SemanticProfile: ...
     def set(self, entity_id: str, profile: SemanticProfile) -> None: ...
     def delete(self, entity_id: str) -> None: ...
-    # Scope profiles (domain- and area-level) have symmetric get/set/delete.
+    # Scope profiles (domain-, integration-, and area-level) have symmetric
+    # get/set/delete.
     def get_domain_profile(self, domain: str) -> Optional[SemanticProfile]: ...
     def set_domain_profile(self, domain: str, profile: SemanticProfile) -> None: ...
     def delete_domain_profile(self, domain: str) -> None: ...
+    def get_integration_profile(self, integration: str) -> Optional[SemanticProfile]: ...
+    def set_integration_profile(self, integration: str, profile: SemanticProfile) -> None: ...
+    def delete_integration_profile(self, integration: str) -> None: ...
     def get_area_profile(self, area_id: str) -> Optional[SemanticProfile]: ...
     def set_area_profile(self, area_id: str, profile: SemanticProfile) -> None: ...
     def delete_area_profile(self, area_id: str) -> None: ...
     # Key enumeration: stored identifiers per scope, as bare names.
     def entity_keys(self) -> List[str]: ...
     def domain_keys(self) -> List[str]: ...
+    def integration_keys(self) -> List[str]: ...
     def area_keys(self) -> List[str]: ...
     def query(self, *,
               domains: Optional[List[str]] = None,
@@ -335,22 +356,20 @@ class ProfileStore:
     def explain(self, entity_id: str) -> ProfileExplanation: ...
     def find_orphans(self, known_entity_ids: Iterable[str]) -> List[str]: ...
 
-    # Async variants of all public methods
+    # Every method above also has an `a`-prefixed async variant, e.g.:
     async def aget(self, entity_id: str) -> Optional[SemanticProfile]: ...
-    async def aget_effective(self, entity_id: str) -> SemanticProfile: ...
-    async def aset(self, entity_id: str, profile: SemanticProfile) -> None: ...
-    async def adelete(self, entity_id: str) -> None: ...
+    async def aset_domain_profile(self, domain: str, profile: SemanticProfile) -> None: ...
     async def aquery(self, **kwargs) -> ProfileQueryResult: ...
-    async def aset_many(self, profiles: Dict[str, SemanticProfile]) -> None: ...
-    async def adelete_many(self, entity_ids: List[str]) -> None: ...
     async def aexplain(self, entity_id: str) -> ProfileExplanation: ...
 ```
+
+The only exception is `attach_resolver()`, which is synchronous-only configuration wiring with no I/O.
 
 **Sync and async APIs.** All public methods on `ProfileStore`, `MesaEnforcer`, `InheritanceResolver`, `TriggerValidator`, and `PrivacyEnforcer` are available in both synchronous and asynchronous variants. Async methods are prefixed with `a` (e.g. `get()` / `aget()`, `evaluate()` / `aevaluate()`). MCP servers are typically async; synchronous APIs will block the event loop in async contexts. Host servers SHOULD use async variants in production.
 
 **Bulk operations.** `set_many()` and `delete_many()` (and their async variants `aset_many()`, `adelete_many()`) accept dictionaries and lists respectively, allowing operators to import or remove profiles for many entities in a single operation. These are essential for deployments with hundreds of entities.
 
-**Scope enumeration.** `domain_keys()` and `area_keys()` return the domain names and area IDs that have a scope-level profile stored, as bare identifiers, mirroring `entity_keys()` for entity profiles. The reserved key scheme that separates the three scopes internally is never exposed. Pair them with `get_domain_profile()` / `get_area_profile()` to walk every stored scope profile, for instance to surface the domain and area defaults an operator has configured.
+**Scope enumeration.** `domain_keys()`, `integration_keys()`, and `area_keys()` return the domain names, integration names, and area IDs that have a scope-level profile stored, as bare identifiers, mirroring `entity_keys()` for entity profiles. The reserved key scheme that separates the scopes internally is never exposed. Pair them with the matching `get_*_profile()` to walk every stored scope profile, for instance to surface the domain and area defaults an operator has configured.
 
 **Orphan detection.** `find_orphans(known_entity_ids)` returns stored profile keys absent from the provided entity ID list, so hosts can detect profiles orphaned by entity renames (Specification Section 5.5). Hosts SHOULD run it at startup and on `entity_registry_updated` events and surface results to the operator.
 
@@ -607,7 +626,11 @@ class ValidationIssue:
 
 ```python
 class TriggerValidator:
-    def __init__(self, store: ProfileStore): ...
+    def __init__(
+        self,
+        store: ProfileStore,
+        expand_target: Optional[Callable[[str, str], List[str]]] = None
+    ): ...
 
     def validate(
         self,
@@ -639,11 +662,13 @@ The host server provides `get_automation_configs` as a callback that returns HA 
 ```python
 from mesa_core import entities_by_role
 
-entities_by_role(config: dict) -> dict[str, set[str]]
+entities_by_role(config: dict, expand_target=None) -> dict[str, set[str]]
 # Returns {"trigger": {...}, "condition": {...}, "action": {...}}
 ```
 
 Given a single automation config dict, it returns the entity IDs referenced in each block, handling the singular/plural HA section keys (`trigger`/`triggers`, etc.) transparently. This is the canonical traversal for automation configs. Hosts building reverse-reference indexes (entity -> automations that reference it) SHOULD call `entities_by_role` over their own automation configs rather than reimplementing the entity-ID walk, so that HA-config-format knowledge stays in one place. mesa-core deliberately does not provide the reverse index, relationship graph, or script/scene traversal itself; those remain host concerns layered on this primitive.
+
+**Indirect entity references.** Automations can reference entities without naming them: device triggers and conditions carry a `device_id`, and named triggers (HA 2026.7+) take `target` blocks with `area_id`, `floor_id`, `label_id`, or `device_id` selectors. Only the host can resolve these against the HA registries. Both `TriggerValidator` and `entities_by_role` accept an optional `expand_target(kind, ref)` callback, called once per selector found, that returns the entity IDs the selector covers in the deployment. Without the callback, indirectly referenced entities are invisible to validation, and a stale `none` declaration on such an entity will pass unflagged. Hosts SHOULD provide the callback (Specification Section 5.5).
 
 **When to run validation:** Level 2 and Level 3 host servers SHOULD run `validate_triggers_automations()` at startup and whenever the automation registry changes (detected via the `automation_reloaded` HA event). Validation results SHOULD be surfaced to operators through the server's configuration interface and included in `mesa_explain_profile` output.
 
@@ -684,6 +709,68 @@ class CallerContext:
     display_name: Optional[str] = None
     session_started_at: Optional[str] = None
 ```
+
+### 4.10 LeaseManager
+
+Advisory coordination leases (Enrichment Section 21). Shipped in mesa-core v1.1. The lease protocol is a signal between MESA-aware components, not a concurrency lock; read Enrichment 21.1 before integrating.
+
+```python
+from mesa_core.lease import LeaseManager
+
+lease_manager = LeaseManager(
+    store,                        # optional: enables protected/critical denial (21.5)
+    get_state=my_ha_state_lookup, # optional: protected "while active" test
+    on_lease_event=fire_ha_event, # optional: receives mesa_lease_expired payloads
+)
+
+response = lease_manager.request(
+    ["light.living_room", "light.hall"], 15,
+    session_id=ctx.session_id, caller_id=ctx.caller_id,
+    intent="movie night scene transition",
+)
+# response: lease_id, granted, entities_granted, entities_denied,
+#           denial_reasons, expires_at, granted_duration_seconds,
+#           active_conflicts, warnings (Enrichment 21.3)
+
+lease_manager.release(response.lease_id, session_id=ctx.session_id)
+lease_manager.release_session(ctx.session_id)   # host session-teardown hook
+lease_manager.expire()                          # periodic sweep for timely events
+lease_manager.sensor_state()                    # binary_sensor.mesa_lease_active data
+```
+
+**Design properties:**
+
+- **In-memory only.** Leases (max 30 seconds, session-scoped) are never persisted; a restart terminates all sessions and therefore all leases. Persistence would resurrect stale locks.
+- **Lazy expiry.** Every operation ignores and sweeps expired leases, so correctness never depends on a background task. Hosts SHOULD call `expire()` (or `aexpire()`) periodically so `mesa_lease_expired` events fire close to `expires_at`, and SHOULD call `release_session()` on session termination (Enrichment 21.4).
+- **Existing holder wins.** Overlapping requests from another session are denied per entity (partial grants are valid). Multi-agent priority preemption (Enrichment 21.6) ships in v2; `caller_priority` is accepted but unused.
+- **Fail-closed automation checks.** Entities monitored by `protected` automations are denied while the automation is active; without a `get_state` callback the automation is treated as active. `critical` automation scope (trigger, condition, and affected entities) is denied unconditionally. `cooperative` and `assertive` automations surface in `active_conflicts`.
+- **Events via callback.** `on_lease_event` receives the Enrichment 21.4 payload (`lease_id`, `entities`, `reason`, `timestamp`) for every ended lease; the host bridges it onto the HA event bus as `mesa_lease_expired`.
+
+Async variants: `arequest()`, `arelease()`, `arelease_session()`, `aexpire()`.
+
+### 4.11 Audit Events
+
+Shipped in mesa-core v1.1. Every audit record mesa-core emits on the `mesa_core.audit` logger carries a `mesa_audit_event` attribute holding the standard event dict; the record message stays human-readable. Hosts attach a logging handler and read `record.mesa_audit_event` for structured consumption, and MAY emit their own events into the same stream with `emit_audit_event(MesaAuditEvent(...))`.
+
+```python
+@dataclass
+class MesaAuditEvent:
+    event_type: str    # "privacy_access" | "enforcement_decision" | "lease"
+    action: str        # "access", the service called, or the lease operation
+    decision: str      # "allowed" | "denied" | "blocked" | "granted" | expiry reason
+    entity_id: Optional[str] = None
+    caller_id: Optional[str] = None
+    roles: List[str] = field(default_factory=list)
+    profile_version: Optional[str] = None
+    rule_applied: Optional[str] = None
+    redaction_mode: Optional[str] = None
+    timestamp: str = ""                  # ISO 8601; stamped at emission
+    details: Dict[str, Any] = field(default_factory=dict)
+```
+
+**Emission points.** `PrivacyEnforcer` emits `privacy_access` for sensitive/restricted entity access and all person entity access (Specification 7.1/17), with `effective_level` and `is_person` in `details`. `MesaEnforcer` emits `enforcement_decision` for every blocked call at INFO; allowed calls are emitted at DEBUG, so full trails are opt-in via log level. `LeaseManager` emits `lease` events for requests (`granted`/`denied`) and every lease end (with the Section 21.4 reason as the decision).
+
+The standard schema is the RECOMMENDED shape for host implementations; the Specification requires the logging itself, not this exact structure (Specification 7.1).
 
 ---
 
@@ -927,11 +1014,11 @@ The test suite ships five malformed profile JSON files that MUST be rejected by 
 
 ---
 
-## 8. Version 1 Scope
+## 8. Version Scope
 
-Version 1 of mesa-core implements the MESA Specification at Level 1 and Level 2, with partial Level 3 support. The focus is on correctness and simplicity over completeness.
+mesa-core 1.x implements the MESA Specification at Levels 1 and 2 in full and at Level 3 including the retrieval API, enforcement, and the lease coordination tools; multi-agent lease preemption is the one Level 3 capability that waits for Version 2. The focus is on correctness and simplicity over completeness.
 
-### Included in Version 1
+### Included in Version 1.0
 
 **Profile storage.** JsonFileBackend, SqliteBackend, MemoryBackend. Full CRUD operations. Deployment defaults. Orphan detection via `find_orphans()`.
 
@@ -959,11 +1046,17 @@ Version 1 of mesa-core implements the MESA Specification at Level 1 and Level 2,
 
 **Conformance test suite.** All seven test categories. All five malformed profile fixtures.
 
-### Deferred to Version 1.1
+### Added in Version 1.1
 
-**Lease protocol.** `LeaseManager` with basic request and release. Single-agent lease management. Automatic expiry. `mesa_lease_expired` event. Deferred from v1.0 because the lease protocol is advisory-only, native automations ignore it, and the primary value of mesa-core v1.0 is the kernel, enforcement, and profile management. Lease support will be added once the Core specification has real-world validation.
+**Typed person traits.** `PersonTraits` (Enrichment Section 17) on `SemanticProfile`, resolved per-field under Rule D, so `is_minor` declared at any inheritance scope reaches privacy enforcement. Validation covers the `household_role` enum and boolean `is_minor` (mirrored in the canonical JSON Schema); `household_role` is RECOMMENDED, not required.
 
-**Audit event schema.** Standardised `mesa_audit_event` structure for logging access to sensitive/restricted entities, enforcement decisions, and lease/coordination events. Fields: `timestamp`, `caller_id`, `roles`, `entity_id`, `action`, `decision`, `profile_version`, `rule_applied`, `redaction_mode`. The specification requires logging for restricted entities and person entities but does not yet define a standard event shape. Deferred to v1.1 to allow real-world usage to inform the schema design.
+**ProfileStore async parity.** Async variants for domain-, integration-, and area-scope profile get/set, deployment defaults, and key enumeration, plus `explain()` / `aexplain()` delegation, completing the "every public method has an async variant" contract of Section 4.2.
+
+**Indirect automation references.** The `expand_target` callback on `TriggerValidator` and `entities_by_role` resolves `area_id` / `floor_id` / `label_id` / `device_id` selectors (device triggers, and the target blocks of HA 2026.7+ named triggers) so stale `triggers_automations: none` declarations behind indirect references are caught. See Section 4.8.
+
+**Lease protocol.** `LeaseManager` with request, release, session release, and automatic (lazy) expiry; `mesa_lease_expired` events via the `on_lease_event` callback; protected/critical automation denial (fail-closed); `binary_sensor.mesa_lease_active` state via `sensor_state()`; and the `mesa_request_lease` / `mesa_release_lease` MCP tools, registered when `register_mesa_tools` receives a `lease_manager`. Overlapping requests are resolved existing-holder-wins; priority preemption (Enrichment 21.6) remains v2. See Section 4.10.
+
+**Audit event schema.** The standardised `mesa_audit_event` structure for access to sensitive/restricted entities, enforcement decisions, and lease/coordination events, emitted by `PrivacyEnforcer`, `MesaEnforcer`, and `LeaseManager` on the `mesa_core.audit` logger. Fields: `timestamp`, `caller_id`, `roles`, `entity_id`, `action`, `decision`, `profile_version`, `rule_applied`, `redaction_mode`, plus `event_type` and an extensible `details` object. See Section 4.11.
 
 ### Deferred to Version 2
 
@@ -984,7 +1077,7 @@ Version 1 of mesa-core implements the MESA Specification at Level 1 and Level 2,
 
 ## 9. Future Versions
 
-**Version 1.1.** Lease protocol (`LeaseManager` with basic request, release, and expiry). `mesa-lint` CLI tool as a separate package. Solar angle temporal conditions. Profile export and import utilities.
+**Version 1.2.** `mesa-lint` CLI tool as a separate package. Solar angle temporal conditions. Profile export and import utilities. Semantic-moment consumption of HA named triggers (2026.7+) via host callbacks, if integrator demand appears.
 
 **Version 2.0.** Multi-agent lease collision resolution. Snapshot management for reversible automations. `binary_sensor.mesa_lease_active` entity support. Additional framework adapters (Node.js MCP SDK if demand exists).
 
