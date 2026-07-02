@@ -63,6 +63,15 @@ _PRIVACY_RULE_D_FIELDS = (
     "privacy_note",
 )
 
+_PERSON_RULE_D_FIELDS = (
+    "household_role",
+    "display_name",
+    "is_minor",
+    "associated_zones",
+    "associated_automations",
+    "presence_entity",
+)
+
 
 @dataclass
 class Layer:
@@ -549,6 +558,17 @@ class ConflictResolver:
             )
             if declared:
                 setattr(effective.privacy_classification, attr, value)
+
+        for attr in _PERSON_RULE_D_FIELDS:
+            declared, value = self.resolve_rule_d(
+                layers,
+                f"person_traits.{attr}",
+                attr,
+                "person_traits",
+                resolution,
+            )
+            if declared:
+                setattr(effective.person_traits, attr, value)
 
         # Effective tags are the union across levels (Spec 9.2).
         tags: list[str] = []

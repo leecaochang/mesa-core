@@ -6,8 +6,11 @@ import logging
 
 import pytest
 
+from mesa_core.backends import MemoryBackend
+from mesa_core.enforcer import MesaEnforcer
 from mesa_core.privacy import CallerContext, PrivacyEnforcer
-from mesa_core.profile import PrivacyClassification, PrivacyLevel
+from mesa_core.profile import PrivacyClassification, PrivacyLevel, SemanticProfile
+from mesa_core.store import ProfileStore
 
 
 def caller(*roles: str, authenticated: bool = True) -> CallerContext:
@@ -110,3 +113,40 @@ def test_normal_access_not_logged(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.INFO, logger="mesa_core.audit"):
         PrivacyEnforcer().evaluate(PrivacyClassification(), caller(), entity_id="light.x")
     assert not [r for r in caplog.records if r.name == "mesa_core.audit"]
+
+
+def test_is_minor_above_entity_scope_reaches_enforcement() -> None:
+    # Spec 17 Rule 2 via inheritance: is_minor declared at domain scope must be
+    # honoured by the enforcer, not just entity-level declarations.
+    store = ProfileStore(backend=MemoryBackend())
+    store.set_domain_profile(
+        "person",
+        SemanticProfile.from_dict(
+            "person",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {"source": "user"},
+                    "person_traits": {"is_minor": True},
+                }
+            },
+        ),
+    )
+    store.set(
+        "person.kid",
+        SemanticProfile.from_dict(
+            "person.kid",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {"source": "user"},
+                    "operational_boundaries": {"control_mode": "autonomous"},
+                }
+            },
+        ),
+    )
+    assert store.get_effective("person.kid").person_traits.is_minor is True
+
+    result = MesaEnforcer(store).evaluate(
+        "person.kid", "person.reload", caller_context=caller("primary_resident")
+    )
+    # is_minor forces restricted, which coerces the declared autonomous to confirm.
+    assert any("privacy level restricted" in w for w in result.warnings)

@@ -12,6 +12,7 @@ from mesa_core import (
     ControlMode,
     MesaValidationError,
     MetadataOrigin,
+    PersonTraits,
     PrivacyLevel,
     SemanticProfile,
     TriggersAutomations,
@@ -244,3 +245,35 @@ def test_ha_condition_predicate_accepted() -> None:
         "type": "ha_condition"
     }
     assert not validate_document(doc).ok
+
+
+def test_person_traits_parsed_into_typed_model() -> None:
+    doc = {
+        "semantic_profile": {
+            "metadata_origin": {"source": "user"},
+            "person_traits": {
+                "household_role": "child",
+                "is_minor": True,
+                "associated_zones": ["zone.school"],
+            },
+        }
+    }
+    p = SemanticProfile.from_dict("person.kid", doc)
+    assert p.person_traits.is_minor is True
+    assert p.person_traits.household_role == "child"
+    assert p.person_traits.associated_zones == ["zone.school"]
+    assert p.declared("person_traits.is_minor")
+    assert not p.declared("person_traits.presence_entity")
+    # Raw round-trip is unchanged by the typed model.
+    assert p.to_dict()["semantic_profile"]["person_traits"] == doc["semantic_profile"]["person_traits"]
+
+
+def test_person_traits_programmatic_serialisation() -> None:
+    profile = SemanticProfile(
+        entity_id="person.kid",
+        person_traits=PersonTraits(household_role="child", is_minor=True),
+    )
+    sp = profile.to_dict()["semantic_profile"]
+    assert sp["person_traits"] == {"household_role": "child", "is_minor": True}
+    # Undeclared person_traits are omitted entirely.
+    assert "person_traits" not in SemanticProfile(entity_id="light.x").to_dict()["semantic_profile"]

@@ -494,3 +494,43 @@ def test_merge_preserves_tightening_regardless_of_authority() -> None:
     lower = make_profile("light", origin="developer", boundaries={"control_mode": "prohibited"})
     merged = ConflictResolver().merge(higher, lower)
     assert merged.operational_boundaries.control_mode == ControlMode.PROHIBITED
+
+
+# ---------------------------------------------------------------- person_traits (Rule D)
+
+
+def person_profile(entity_id: str, origin: str = "user", **traits: Any) -> SemanticProfile:
+    mo: dict[str, Any] = {"source": origin}
+    if origin == "inferred_ai":
+        mo |= {"confidence": 0.9, "generated_at": "2026-06-01T00:00:00+00:00"}
+    doc = {"semantic_profile": {"metadata_origin": mo, "person_traits": dict(traits)}}
+    return SemanticProfile.from_dict(entity_id, doc)
+
+
+def test_person_traits_inherited_from_domain_layer() -> None:
+    effective, _ = resolve(
+        "person.kid",
+        Layer("entity", make_profile("person.kid", boundaries={"control_mode": "confirm"})),
+        Layer("domain", person_profile("person", is_minor=True, household_role="child")),
+    )
+    assert effective.person_traits.is_minor is True
+    assert effective.person_traits.household_role == "child"
+
+
+def test_person_traits_entity_scope_beats_domain() -> None:
+    effective, res = resolve(
+        "person.teen",
+        Layer("entity", person_profile("person.teen", is_minor=False)),
+        Layer("domain", person_profile("person", is_minor=True)),
+    )
+    assert effective.person_traits.is_minor is False
+    assert res.conflicts_detected
+
+
+def test_person_traits_lower_tier_never_overrides_trusted() -> None:
+    effective, _ = resolve(
+        "person.kid",
+        Layer("entity", person_profile("person.kid", origin="inferred_ai", is_minor=False)),
+        Layer("domain", person_profile("person", origin="user", is_minor=True)),
+    )
+    assert effective.person_traits.is_minor is True

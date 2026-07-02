@@ -181,13 +181,6 @@ class MesaEnforcer:
     def _is_enforced(self, profile_mode: str) -> bool:
         return self.mode == "enforced" or profile_mode == "enforced"
 
-    def _is_minor(self, entity_id: str) -> bool:
-        stored = self.store.get(entity_id)
-        if stored is None or not stored.raw:
-            return False
-        traits = stored.raw.get("semantic_profile", {}).get("person_traits", {})
-        return traits.get("is_minor") is True
-
     def _evaluate_predicate(
         self, predicate: dict[str, Any], warnings: list[str], limit_id: str
     ) -> bool:
@@ -304,7 +297,9 @@ class MesaEnforcer:
             caller_context,
             entity_id=entity_id,
             is_person=is_person,
-            is_minor=self._is_minor(entity_id),
+            # From the resolved profile, so is_minor declared at any inheritance
+            # level is honoured (Spec 17 Rule 2 cannot be scoped away).
+            is_minor=profile.person_traits.is_minor is True,
         )
         if not decision.allowed:
             return blocked(decision.reason, "privacy:deny_for")

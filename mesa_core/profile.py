@@ -153,6 +153,22 @@ class OperationalBoundaries:
 
 
 @dataclass
+class PersonTraits:
+    """People semantics for person entities (Enrichment Section 17).
+
+    None (or an empty list) means "not declared" (Rule E); ``is_minor: true``
+    at any trusted layer forces restricted privacy behaviour at enforcement.
+    """
+
+    household_role: str | None = None
+    display_name: str | None = None
+    is_minor: bool | None = None
+    associated_zones: list[str] = field(default_factory=list)
+    associated_automations: list[str] = field(default_factory=list)
+    presence_entity: str | None = None
+
+
+@dataclass
 class ProfileMetadata:
     schema_version: str = "1.0"
     profile_version: str | None = None
@@ -181,6 +197,7 @@ class SemanticProfile:
     metadata: ProfileMetadata = field(default_factory=ProfileMetadata)
     operational_boundaries: OperationalBoundaries = field(default_factory=OperationalBoundaries)
     privacy_classification: PrivacyClassification = field(default_factory=PrivacyClassification)
+    person_traits: PersonTraits = field(default_factory=PersonTraits)
     inheritance_scope: str = "entity"
     diagnostic_profile: dict[str, Any] | None = None
     raw: dict[str, Any] = field(default_factory=dict)
@@ -327,12 +344,23 @@ class SemanticProfile:
         else:
             privacy = PrivacyClassification()
 
+        pt_raw = sp.get("person_traits") or {}
+        person = PersonTraits(
+            household_role=pt_raw.get("household_role"),
+            display_name=pt_raw.get("display_name"),
+            is_minor=pt_raw.get("is_minor"),
+            associated_zones=list(pt_raw.get("associated_zones") or []),
+            associated_automations=list(pt_raw.get("associated_automations") or []),
+            presence_entity=pt_raw.get("presence_entity"),
+        )
+
         return cls(
             entity_id=entity_id,
             semantic_tags=list(sp.get("semantic_tags") or []),
             metadata=metadata,
             operational_boundaries=boundaries,
             privacy_classification=privacy,
+            person_traits=person,
             inheritance_scope=sp.get("inheritance_scope", "entity"),
             diagnostic_profile=root.get("diagnostic_profile"),
             raw=root,
@@ -427,6 +455,19 @@ class SemanticProfile:
             pc_dict["access_roles"] = copy.deepcopy(pc.access_roles)
         if pc.deny_response_mode != "omit":
             pc_dict["deny_response_mode"] = pc.deny_response_mode
+
+        pt = self.person_traits
+        pt_dict: dict[str, Any] = {}
+        for key in ("household_role", "display_name", "is_minor", "presence_entity"):
+            value = getattr(pt, key)
+            if value is not None:
+                pt_dict[key] = value
+        for key in ("associated_zones", "associated_automations"):
+            values = getattr(pt, key)
+            if values:
+                pt_dict[key] = list(values)
+        if pt_dict:
+            sp_dict["person_traits"] = pt_dict
 
         root: dict[str, Any] = {
             "semantic_profile": sp_dict,
