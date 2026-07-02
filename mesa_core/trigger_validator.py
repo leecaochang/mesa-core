@@ -15,6 +15,7 @@ the host can query the HA registries.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -174,3 +175,17 @@ class TriggerValidator:
         ):
             return []
         return self._issues_for(entity_id, get_automation_configs())
+
+    async def avalidate(
+        self, get_automation_configs: Callable[[], list[dict[str, Any]]]
+    ) -> list[ValidationIssue]:
+        return await asyncio.to_thread(self.validate, get_automation_configs)
+
+    async def avalidate_entity(
+        self,
+        entity_id: str,
+        get_automation_configs: Callable[[], list[dict[str, Any]]],
+    ) -> list[ValidationIssue]:
+        return await asyncio.to_thread(
+            self.validate_entity, entity_id, get_automation_configs
+        )

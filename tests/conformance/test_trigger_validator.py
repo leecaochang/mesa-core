@@ -150,6 +150,22 @@ def test_entities_by_role_expands_targets() -> None:
     assert by_role["action"] == set()
 
 
+def test_async_variants_match_sync() -> None:
+    import asyncio
+
+    validator = TriggerValidator(
+        store=store_with_none("input_boolean.guest_mode", "binary_sensor.occupied")
+    )
+
+    async def run() -> None:
+        issues = await validator.avalidate(lambda: AUTOMATIONS)
+        assert {i.entity_id for i in issues} == {"input_boolean.guest_mode", "binary_sensor.occupied"}
+        single = await validator.avalidate_entity("input_boolean.guest_mode", lambda: AUTOMATIONS)
+        assert len(single) == 1 and single[0].role == "trigger"
+
+    asyncio.run(run())
+
+
 def test_validate_entity_single_path() -> None:
     validator = TriggerValidator(
         store=store_with_none("input_boolean.guest_mode", "binary_sensor.occupied")

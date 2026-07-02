@@ -87,7 +87,7 @@ from mesa_core import import_from_integration
 
 profile = import_from_integration("/config/custom_components/my_integration")
 if profile is not None:
-    store.set_domain_profile(profile.entity_id, profile)
+    store.set_integration_profile(profile.entity_id, profile)
 ```
 
 ## Documentation
@@ -100,7 +100,7 @@ if profile is not None:
 
 ## Status
 
-mesa-core v1.1 is ready for use: profile storage and inheritance, enforcement with confirmation, the MCP retrieval tools, privacy controls, and the advisory lease protocol are all implemented. Multi-agent lease preemption is planned for v2.
+mesa-core v1.1 is ready for use: profile storage and inheritance, enforcement with confirmation, the MCP retrieval tools, privacy controls, and the advisory lease protocol are all implemented.
 
 ```bash
 git clone https://github.com/sfox38/mesa-core

@@ -32,6 +32,8 @@ This document describes what mesa-core does, how it is structured, how MCP serve
    - 4.7 [TemporalEvaluator](#47-temporalevaluator)
    - 4.8 [TriggerValidator](#48-triggervalidator)
    - 4.9 [PrivacyEnforcer](#49-privacyenforcer)
+   - 4.10 [LeaseManager](#410-leasemanager)
+   - 4.11 [Audit Events](#411-audit-events)
 5. [MCP Tool Registration](#5-mcp-tool-registration)
    - 5.1 [register_mesa_tools()](#51-register_mesa_tools)
    - 5.2 [Tool Implementations](#52-tool-implementations)
@@ -39,6 +41,7 @@ This document describes what mesa-core does, how it is structured, how MCP serve
    - 6.1 [Minimal Integration (Level 1)](#61-minimal-integration-level-1)
    - 6.2 [Full Integration (Level 3)](#62-full-integration-level-3)
    - 6.3 [Framework Adapters](#63-framework-adapters)
+   - 6.4 [Host Callback Reference](#64-host-callback-reference)
 7. [Conformance Test Suite](#7-conformance-test-suite)
 8. [Version Scope](#8-version-scope)
 9. [Future Versions](#9-future-versions)
@@ -365,7 +368,7 @@ class ProfileStore:
 
 The only exception is `attach_resolver()`, which is synchronous-only configuration wiring with no I/O.
 
-**Sync and async APIs.** All public methods on `ProfileStore`, `MesaEnforcer`, `InheritanceResolver`, `TriggerValidator`, and `PrivacyEnforcer` are available in both synchronous and asynchronous variants. Async methods are prefixed with `a` (e.g. `get()` / `aget()`, `evaluate()` / `aevaluate()`). MCP servers are typically async; synchronous APIs will block the event loop in async contexts. Host servers SHOULD use async variants in production.
+**Sync and async APIs.** All public methods on `ProfileStore`, `MesaEnforcer`, and `TriggerValidator` are available in both synchronous and asynchronous variants, prefixed with `a` (e.g. `get()` / `aget()`, `evaluate()` / `aevaluate()`). `LeaseManager`'s lifecycle methods have async variants (`arequest()`, `arelease()`, `arelease_session()`, `aexpire()`); its `active_leases()` and `sensor_state()` are synchronous-only reads of in-memory state. Async resolution goes through the store: `aget_effective()` and `aexplain()` wrap the `InheritanceResolver`. `PrivacyEnforcer.evaluate()` is synchronous-only by design: it is pure computation with no I/O, so it cannot block the event loop. MCP servers are typically async; host servers SHOULD use the async variants for anything that touches storage.
 
 **Bulk operations.** `set_many()` and `delete_many()` (and their async variants `aset_many()`, `adelete_many()`) accept dictionaries and lists respectively, allowing operators to import or remove profiles for many entities in a single operation. These are essential for deployments with hundreds of entities.
 
@@ -394,13 +397,13 @@ class StorageBackend(ABC):
     def list_keys(self, prefix: Optional[str] = None) -> List[str]: ...
 ```
 
-**JsonFileBackend.** Stores each profile as a separate JSON file in a directory. File name is the entity ID with slashes replaced by underscores. Suitable for small to medium deployments.
+**JsonFileBackend.** Stores each profile as a separate JSON file in a directory. File names are the URL-quoted storage key, keeping the filename-to-key mapping reversible so `list_keys()` reconstructs keys exactly. Suitable for small to medium deployments.
 
 ```python
 JsonFileBackend(base_path: str, create_if_missing: bool = True)
 ```
 
-**SqliteBackend.** Stores all profiles in a SQLite database. Supports efficient tag-based queries and pagination. Suitable for large deployments.
+**SqliteBackend.** Stores all profiles as JSON documents in a single SQLite database file, using the standard library `sqlite3` (no extra dependency). Filtering and pagination are evaluated by `ProfileStore` in Python, which is comfortably fast at home-deployment scale. Suitable for larger profile sets than one-file-per-profile storage.
 
 ```python
 SqliteBackend(db_path: str)
@@ -489,14 +492,14 @@ This default applies **only as a fallback**: it fills `control_mode` solely when
 **Evaluation order:**
 
 1. Resolve effective profile via InheritanceResolver.
-2. Apply privacy enforcement via PrivacyEnforcer. If caller is in `deny_for`, block immediately.
-3. Evaluate `control_mode`:
+2. Apply temporal constraints via TemporalEvaluator first, so a temporally tightened `control_mode` is what the following steps evaluate.
+3. Apply privacy enforcement via PrivacyEnforcer. If caller is in `deny_for`, block immediately; a `restricted` effective level coerces `autonomous` to `confirm`.
+4. Evaluate `control_mode`:
    - `read_only`: block with reason "Entity is read-only by nature: {control_reason or entity_id}".
    - `prohibited`: block with reason "Entity is prohibited by policy: {control_reason or entity_id}".
    - `confirm`: in advisory mode, add confirmation warning and surface `control_reason`. In enforced mode, deny the call and return a `confirmation_challenge`, or allow it when a valid `confirmation_token` accompanies the call (Specification Section 6.6). If no interaction channel exists, block as `prohibited`.
    - `autonomous`: proceed.
-4. Evaluate temporal constraints via TemporalEvaluator.
-5. Evaluate declared limits against service params.
+5. Evaluate declared limits (profile limits plus active temporal value constraints) against service params.
 6. Return result with any warnings.
 
 ### 4.5 InheritanceResolver
@@ -518,14 +521,15 @@ explanation = resolver.explain("light.bedroom_ceiling")
 **Resolution algorithm:**
 
 1. Load entity-level profile if it exists.
-2. Load area-level profile for the entity's assigned area (requires HA area registry lookup via a callback the host provides).
-3. Load domain-level profile from the integration that owns this entity.
-4. Load deployment defaults.
-5. Merge from lowest to highest precedence: defaults -> domain -> area -> entity.
-6. Apply conflict resolution rules (Section 5.7) for fields present at multiple levels.
-7. Apply `triggers_automations` stickiness: if any level is `likely`, effective is `likely` unless entity-level overrides with `override_triggers_automations: true`.
-8. Apply `control_mode` tightening: most restrictive value wins.
-9. Apply privacy most-restrictive-wins.
+2. Load area-level profile for the entity's assigned area (requires the host's `get_entity_area` callback).
+3. Load integration-level profile for the integration that created this entity (requires the host's `get_entity_integration` callback; without it, only integrations whose name equals the entity's HA domain resolve, and hub/device integration profiles stay inert).
+4. Load domain-level profile for the entity's HA domain.
+5. Load deployment defaults.
+6. Merge from lowest to highest precedence: defaults -> domain -> integration -> area -> entity.
+7. Apply conflict resolution rules (Section 5.7) for fields present at multiple levels.
+8. Apply `triggers_automations` stickiness: if any level is `likely`, effective is `likely` unless entity-level overrides with `override_triggers_automations: true`.
+9. Apply `control_mode` tightening: most restrictive value wins.
+10. Apply privacy most-restrictive-wins.
 10. Return merged SemanticProfile.
 
 **Host callback for area/domain lookup:**
@@ -670,11 +674,11 @@ Given a single automation config dict, it returns the entity IDs referenced in e
 
 **Indirect entity references.** Automations can reference entities without naming them: device triggers and conditions carry a `device_id`, and named triggers (HA 2026.7+) take `target` blocks with `area_id`, `floor_id`, `label_id`, or `device_id` selectors. Only the host can resolve these against the HA registries. Both `TriggerValidator` and `entities_by_role` accept an optional `expand_target(kind, ref)` callback, called once per selector found, that returns the entity IDs the selector covers in the deployment. Without the callback, indirectly referenced entities are invisible to validation, and a stale `none` declaration on such an entity will pass unflagged. Hosts SHOULD provide the callback (Specification Section 5.5).
 
-**When to run validation:** Level 2 and Level 3 host servers SHOULD run `validate_triggers_automations()` at startup and whenever the automation registry changes (detected via the `automation_reloaded` HA event). Validation results SHOULD be surfaced to operators through the server's configuration interface and included in `mesa_explain_profile` output.
+**When to run validation:** Level 2 and Level 3 host servers SHOULD run `TriggerValidator.validate()` (or `avalidate()`) at startup and whenever the automation registry changes (detected via the `automation_reloaded` HA event). Validation results SHOULD be surfaced to operators through the server's configuration interface and included in `mesa_explain_profile` output.
 
 ### 4.9 PrivacyEnforcer
 
-Evaluates privacy classification against caller context and returns an access decision.
+Evaluates privacy classification against caller context and returns an access decision. Response shaping is the host's responsibility: mesa-core returns the decision together with `deny_response_mode`, and applying `omit`, `redact`, or `error` to the actual response payload happens in the host server, which owns the response.
 
 ```python
 from mesa_core.privacy import PrivacyEnforcer, CallerContext
@@ -791,13 +795,13 @@ register_mesa_tools(
     store=store,
     adapter="fastmcp",          # "fastmcp" or "raw_sdk"
     server=mcp_app,             # the host MCP server instance
-    enforcer=enforcer,          # optional: enable enforcement tools
+    enforcer=enforcer,          # accepted for API stability; registers no tools
     lease_manager=lease_mgr,    # optional: enable lease tools (mesa-core 1.1+)
     caller_context_fn=get_ctx   # optional: function returning CallerContext for current session
 )
 ```
 
-If `enforcer` is not provided, the enforcement-related tools are not registered. If `lease_manager` is not provided, lease tools are not registered. This allows incremental adoption: a host server can start with just the query tools and add enforcement later.
+Enforcement is not exposed as MCP tools: `MesaEnforcer` wraps the host's service-call path directly (Section 6.2), where it can actually block execution; an agent-callable permission check would be advisory only. The `enforcer` parameter is accepted for API stability and registers nothing. If `lease_manager` is not provided, the lease tools are not registered. This allows incremental adoption: a host server can start with just the query tools and wire enforcement into its service-call path later.
 
 ### 5.2 Tool Implementations
 
@@ -965,6 +969,23 @@ register_mesa_tools(store=store, adapter=MyFrameworkRegistry(), server=app)
 
 ---
 
+### 6.4 Host Callback Reference
+
+mesa-core never talks to Home Assistant. Every piece of HA registry or state knowledge arrives through a host-supplied callback, and every absent callback degrades conservatively: unevaluable always tightens, never loosens. This table is the single reference for what each callback feeds and what you lose without it.
+
+| Callback | Consumed by | Without it |
+|---|---|---|
+| `get_entity_area` | `ProfileStore` / `InheritanceResolver` | Area-level inheritance is skipped; `query(areas=...)` raises `ValueError`. |
+| `get_entity_integration` | `InheritanceResolver` | Integration sidecar profiles resolve only where the integration name equals the entity's HA domain; hub and device integration profiles stay inert (Specification 5.6). |
+| `get_state` | `MesaEnforcer`, `LeaseManager` (accepted by `TemporalEvaluator` for future entity-state condition types; unused there in 1.x) | Declared-limit predicates are treated as active (fail-closed), so limits may block unexpectedly; protected automations deny leases unconditionally. |
+| `get_calendar_events` | `TemporalEvaluator` | `calendar_entity` conditions are unevaluable and treated as active (fail-closed). Note `solar_angle`, `duration`, and `relative_to_event` conditions validate but are unevaluable in 1.x regardless, and also fail closed. |
+| `get_automation_configs` | `TriggerValidator` (per call) | No automation cross-reference is possible. |
+| `expand_target` | `TriggerValidator`, `entities_by_role` | Indirect references (device triggers, named-trigger target selectors) are invisible; a stale `none` declaration behind them passes unflagged. |
+| `caller_context_fn` | `register_mesa_tools` | Tools respond as an anonymous, role-less caller; lease session scoping degrades. |
+| `on_lease_event` | `LeaseManager` | `mesa_lease_expired` events are not bridged to the HA event bus. |
+
+---
+
 ## 7. Conformance Test Suite
 
 The mesa-core package ships a conformance test suite that any MESA implementation can run against itself. Tests are written with pytest and can be run independently of the host server.
@@ -994,7 +1015,7 @@ The conformance suite runs from a source checkout. The `tests/` directory is not
 
 **Temporal constraints (`test_temporal.py`).** Tests `time_range` condition across midnight boundary. Tests `day_of_week` with single day and multiple days. Tests `calendar_entity` with active and inactive calendar events. Tests `negate: true` inversion for each condition type. Tests that temporal constraints correctly modify `control_mode` and `max_value`. Tests that an effect attempting to loosen `control_mode` below the effective base is ignored and surfaces a warning. Tests that unevaluable conditions (missing or `unavailable` entity) apply the effect, with and without `negate`.
 
-**Privacy enforcement (`test_privacy.py`).** Tests `deny_for` role blocks access. Tests `unrestricted_for` role bypasses sensitive level restrictions. Tests unauthenticated caller treated as no-role. Tests `is_minor: true` triggers `restricted` regardless of declared level. Tests `deny_response_mode: redact` returns placeholder not entity data.
+**Privacy enforcement (`test_privacy.py`).** Tests `deny_for` role blocks access. Tests `unrestricted_for` role bypasses sensitive level restrictions. Tests unauthenticated caller treated as no-role. Tests `is_minor: true` triggers `restricted` regardless of declared level. Tests that denials surface `deny_response_mode` so the host can apply `omit`, `redact`, or `error` response shaping.
 
 **Inferred profile rules (`test_inferred.py`).** Tests that `inferred_ai` profiles missing `confidence` are malformed. Tests that `inferred_ai` profiles missing `generated_at` are malformed. Tests that `confidence >= 0.7` allows use for non-safety decisions. Tests that `control_mode` from inferred profiles only applies when it tightens. Tests that helper-domain inferred profiles default `triggers_automations` to `likely`. Tests staleness status computation at day 0, day 30, and day 61.
 
@@ -1024,15 +1045,15 @@ mesa-core 1.x implements the MESA Specification at Levels 1 and 2 in full and at
 
 **SemanticProfile dataclass.** All kernel fields. All fields from Specification Sections 5 through 8. Serialisation and deserialisation from JSON/dict.
 
-**Canonical JSON Schema.** A machine-readable JSON Schema file (`mesa_core/schemas/mesa_profile.schema.json`) defining the complete MESA profile structure as specified in the Specification. This is the authoritative validation artifact; `validation.py` uses it, and third-party tools can consume it directly without reimplementing validation from prose tables. A separate `mesa_tools.schema.json` defines the input and output schemas for all MCP tools.
+**Canonical JSON Schema.** A machine-readable JSON Schema file (`mesa_core/schemas/mesa_profile.schema.json`) defining the complete MESA profile structure as specified in the Specification. This is the canonical artifact for third parties, who can consume it directly without reimplementing validation from prose tables. A separate `mesa_tools.schema.json` defines the input schemas for all MCP tools.
 
-**Profile validation.** Kernel field presence checks. Enum value validation for `control_mode`, `triggers_automations`, `privacy_classification.level`. Predicate operator validation (canonical tokens and `ha_condition` type). Tag format validation (canonical or `vendorname.qualifier`). Malformed inferred profile detection. All validation is driven by the canonical JSON Schema.
+**Profile validation.** Kernel field presence checks. Enum value validation for `control_mode`, `triggers_automations`, `privacy_classification.level`. Predicate operator validation (canonical tokens and `ha_condition` type). Tag format validation (canonical or `vendorname.qualifier`). Malformed inferred profile detection. Validation is hand-rolled to keep the core dependency-free; a dedicated test asserts it stays in agreement with the canonical JSON Schema on every fixture.
 
 **TriggerValidator.** Live cross-reference of declared `triggers_automations: none` profiles against actual HA automation configurations. Uses host-provided callback for automation data. Returns `ValidationIssue` list. Runs at startup and on automation reload.
 
-**Profile migration.** `migrate_profile(profile, target_version)` utility converts profiles from older schema versions to the current version. Handles field renames, enum value changes, and structural reorganisations. Returns a migrated copy without modifying the original. Logs all transformations applied.
+**Profile migration.** `migrate_profile(profile, target_version)` utility and migration framework. With 1.0 as the only published schema version, it stamps a missing `schema_version` and returns a copy otherwise unchanged; no cross-version conversions exist yet. Field renames, enum value changes, and structural reorganisations land here when a schema revision first requires them.
 
-**Integration profile import.** `import_from_integration(integration_path)` loads a developer profile from an integration directory's `mesa_profile.json`. Returns a `SemanticProfile` with `inheritance_scope: domain`. Profiles that omit `metadata_origin` are stamped `source: developer`, per Specification Section 5.3; profiles loaded from any other source default to `source: unknown`. Host servers call this at startup for each installed integration to populate the `ProfileStore`. Requires filesystem access to the integration directories; hosts running on a separate machine from HA cannot use this import path and rely on operator-authored profiles instead.
+**Integration profile import.** `import_from_integration(integration_path)` loads a developer profile from an integration directory's `mesa_profile.json`. Returns a `SemanticProfile` with `inheritance_scope: integration`. Profiles that omit `metadata_origin` are stamped `source: developer`, per Specification Section 5.3; profiles loaded from any other source default to `source: unknown`. Host servers call this at startup for each installed integration to populate the `ProfileStore`. Requires filesystem access to the integration directories; hosts running on a separate machine from HA cannot use this import path and rely on operator-authored profiles instead.
 
 **InheritanceResolver.** Three-level inheritance (domain, area, entity). Deployment defaults as floor. Conflict resolution Rules A through E. `triggers_automations` stickiness and override. `control_mode` tightening.
 
@@ -1095,8 +1116,7 @@ mesa-core is a Python library for MCP server developers. It is distributed via P
 
 ```bash
 # Install in your development environment
-pip install mesa-core
-pip install mesa-core[sqlite]   # with SQLite backend
+pip install mesa-core           # SQLite backend included (stdlib sqlite3)
 pip install mesa-core[test]     # with test suite
 
 # Add as a dependency in your server's pyproject.toml

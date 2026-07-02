@@ -13,7 +13,7 @@ mesa-core 1.1 completes MESA Level 3: the advisory lease protocol and the standa
 - **Typed person traits.** `PersonTraits` (Enrichment Section 17) on `SemanticProfile`, resolved per-field under conflict Rule D. Fixes a privacy-enforcement gap: `is_minor: true` declared at domain or area scope now reaches enforcement instead of being read from the entity document only.
 - **person_traits validation.** `household_role` is checked against the Section 17 enum and `is_minor` must be a boolean, in both the validator and the canonical JSON Schema.
 - **Indirect automation references.** `TriggerValidator` and `entities_by_role` accept an `expand_target(kind, ref)` callback resolving `area_id`, `floor_id`, `label_id`, and `device_id` selectors to entity IDs, so stale `triggers_automations: none` declarations behind device triggers or the target blocks of named triggers (Home Assistant 2026.7+) are caught. Without the callback, behaviour is unchanged.
-- **ProfileStore async parity.** Async variants for domain-, integration-, and area-scope profile get/set, deployment defaults, and key enumeration, plus `explain()` and `aexplain()` delegating to the resolver, completing the documented "every public method has an async variant" contract.
+- **ProfileStore async parity.** Async variants for domain-, integration-, and area-scope profile get/set, deployment defaults, and key enumeration, plus `explain()` and `aexplain()` delegating to the resolver. `TriggerValidator` gains `avalidate()` and `avalidate_entity()`. Async resolution goes through the store wrappers; `PrivacyEnforcer.evaluate()` stays synchronous-only as pure computation.
 
 ### Changed
 

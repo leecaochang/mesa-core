@@ -1087,7 +1087,7 @@ These tools do not exist yet. They are what the community needs to build for MES
 
 **mesa-core.** The reference Python module implementing the MESA Specification. Provides profile storage, enforcement engine, inheritance resolution, conflict resolution, temporal constraint evaluation, privacy enforcement, and all MESA MCP tools. Install with `pip install mesa-core`. This is the primary community deliverable.
 
-**`validate_triggers_automations()`.** A function built into mesa-core that cross-references your declared `triggers_automations: none` profiles against your actual HA automation configurations. Run it at startup and when automations change. If an entity you declared `none` is found in an automation trigger or condition block, you get a `ValidationIssue` with the automation ID, the entity's role in that automation, and a recommendation. This prevents the silent safety gap where an operator declares `none` and later adds an automation without updating the profile.
+**`TriggerValidator`.** Built into mesa-core: `TriggerValidator(store).validate(get_automation_configs)` cross-references your declared `triggers_automations: none` profiles against your actual HA automation configurations. Run it at startup and when automations change. If an entity you declared `none` is found in an automation trigger or condition block, you get a `ValidationIssue` with the automation ID, the entity's role in that automation, and a recommendation. This prevents the silent safety gap where an operator declares `none` and later adds an automation without updating the profile. One caveat: automations that reference entities indirectly (device triggers, or the `target` blocks of named triggers in HA 2026.7+) are only visible to validation when the host supplies the `expand_target` callback; if yours does not, prefer `unknown` over `none` for entities driven that way.
 
 ```python
 from mesa_core import TriggerValidator
@@ -1153,6 +1153,6 @@ When an agent is blocked from acting, it needs to communicate a reason to the us
 
 **Declaring `triggers_automations: none` and then adding an automation without updating the profile.**
 
-`none` is a positive assertion. Once declared, it tells every agent in every session that this entity is safe to act on without cascade caution. If you later add an automation that uses this entity as a trigger or condition, the declaration is now wrong. Use `validate_triggers_automations()` from mesa-core to catch this automatically. Run it at startup and when automations change. If you cannot run validation, use `unknown` instead of `none` unless you are certain.
+`none` is a positive assertion. Once declared, it tells every agent in every session that this entity is safe to act on without cascade caution. If you later add an automation that uses this entity as a trigger or condition, the declaration is now wrong. Use mesa-core's `TriggerValidator` to catch this automatically. Run it at startup and when automations change. If you cannot run validation, use `unknown` instead of `none` unless you are certain.
 
 *MESA - Metadata and Environment Semantics for Agents. Version 1.0. Getting Started Guide. Discussion and contributions are welcome via GitHub Issues.*
