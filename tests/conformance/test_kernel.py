@@ -85,6 +85,8 @@ def test_all_privacy_levels_accepted(value: str) -> None:
         "missing_generated_at.json",
         "invalid_operator.json",
         "invalid_control_mode.json",
+        "person_minor_wrong_type.json",
+        "person_invalid_household_role.json",
     ],
 )
 def test_malformed_fixtures_rejected(fixture: str) -> None:
@@ -266,6 +268,18 @@ def test_person_traits_parsed_into_typed_model() -> None:
     assert not p.declared("person_traits.presence_entity")
     # Raw round-trip is unchanged by the typed model.
     assert p.to_dict()["semantic_profile"]["person_traits"] == doc["semantic_profile"]["person_traits"]
+
+
+def test_person_traits_minimal_declaration_is_valid() -> None:
+    # household_role is RECOMMENDED, not required (Enrichment Section 17): the
+    # minimal safety-first declaration must validate.
+    doc = {
+        "semantic_profile": {
+            "metadata_origin": {"source": "user"},
+            "person_traits": {"is_minor": True},
+        }
+    }
+    assert validate_document(doc).ok
 
 
 def test_person_traits_programmatic_serialisation() -> None:

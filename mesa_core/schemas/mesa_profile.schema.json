@@ -171,6 +171,45 @@
         },
         "privacy_classification": {
           "$ref": "#/$defs/privacyClassification"
+        },
+        "person_traits": {
+          "$ref": "#/$defs/personTraits"
+        }
+      }
+    },
+    "personTraits": {
+      "type": "object",
+      "properties": {
+        "household_role": {
+          "enum": [
+            "primary_resident",
+            "secondary_resident",
+            "child",
+            "regular_guest",
+            "temporary_guest",
+            "caregiver"
+          ]
+        },
+        "display_name": {
+          "type": "string"
+        },
+        "is_minor": {
+          "type": "boolean"
+        },
+        "associated_zones": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "associated_automations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "presence_entity": {
+          "type": "string"
         }
       }
     },

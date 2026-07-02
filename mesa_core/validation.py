@@ -29,6 +29,14 @@ VALID_SIDE_EFFECT_SCOPES = {
 VALID_STATE_VOLATILITY = {"static", "low", "medium", "high", "realtime"}
 VALID_STATE_PERSISTENCE = {"permanent", "temporary", "session", "transient"}
 VALID_DENY_RESPONSE_MODES = {"omit", "redact", "error"}
+VALID_HOUSEHOLD_ROLES = {
+    "primary_resident",
+    "secondary_resident",
+    "child",
+    "regular_guest",
+    "temporary_guest",
+    "caregiver",
+}
 VALID_INHERITANCE_SCOPES = {"entity", "domain", "integration", "area"}
 PREDICATE_OPERATORS = {"eq", "neq", "gt", "gte", "lt", "lte", "in", "contains"}
 VALID_TEMPORAL_TYPES = {
@@ -185,6 +193,22 @@ def _check_boundaries(sp: dict[str, Any], report: ValidationReport) -> None:
             )
 
 
+def _check_person_traits(sp: dict[str, Any], report: ValidationReport) -> None:
+    pt = sp.get("person_traits")
+    if pt is None:
+        return
+    if not isinstance(pt, dict):
+        report.errors.append("person_traits must be an object")
+        return
+    _check_enum(
+        pt.get("household_role"), VALID_HOUSEHOLD_ROLES, "person_traits.household_role", report
+    )
+    if "is_minor" in pt and not isinstance(pt["is_minor"], bool):
+        # A non-boolean is_minor would silently fail the mandatory restricted
+        # check (Spec 17 Rule 2): reject loudly rather than fail open.
+        report.errors.append("person_traits.is_minor must be a boolean")
+
+
 def validate_document(data: dict[str, Any], entity_id: str = "") -> ValidationReport:
     """Validate a profile document (root form or bare semantic_profile contents)."""
     report = ValidationReport()
@@ -195,6 +219,7 @@ def validate_document(data: dict[str, Any], entity_id: str = "") -> ValidationRe
     sp = _semantic_profile_of(data)
     _check_metadata_origin(sp, report)
     _check_boundaries(sp, report)
+    _check_person_traits(sp, report)
 
     tags = sp.get("semantic_tags")
     if tags is not None:

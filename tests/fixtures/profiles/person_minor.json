@@ -1,0 +1,9 @@
+{
+  "semantic_profile": {
+    "schema_version": "1.0",
+    "metadata_origin": {"source": "user"},
+    "semantic_tags": ["person.child"],
+    "person_traits": {"display_name": "Kid", "is_minor": true}
+  },
+  "privacy_classification": {"level": "restricted"}
+}
