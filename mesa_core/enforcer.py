@@ -13,12 +13,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
+from mesa_core.audit import MesaAuditEvent, emit_audit_event
 from mesa_core.inheritance import InheritanceResolver
 from mesa_core.privacy import CallerContext, PrivacyEnforcer
 from mesa_core.profile import (
@@ -274,7 +276,23 @@ class MesaEnforcer:
         profile = explanation.effective_profile
         warnings = list(explanation.warnings)
 
+        def audit(decision: str, rule: str | None, level: int = logging.INFO) -> None:
+            emit_audit_event(
+                MesaAuditEvent(
+                    event_type="enforcement_decision",
+                    action=service,
+                    decision=decision,
+                    entity_id=entity_id,
+                    caller_id=caller_context.caller_id if caller_context else None,
+                    roles=caller_context.effective_roles() if caller_context else [],
+                    profile_version=profile.metadata.profile_version,
+                    rule_applied=rule,
+                ),
+                level=level,
+            )
+
         def blocked(reason: str, rule: str) -> EnforcementResult:
+            audit("blocked", rule)
             return EnforcementResult(
                 allowed=False,
                 reason=reason,
@@ -397,6 +415,8 @@ class MesaEnforcer:
                     return blocked(violation, f"declared_limit:{limit_id}")
                 warnings.append(f"advisory: {violation}")
 
+        # Allowed calls are audited at DEBUG: full trails opt in via log level.
+        audit("allowed", None, level=logging.DEBUG)
         return EnforcementResult(
             allowed=True,
             reason="permitted",

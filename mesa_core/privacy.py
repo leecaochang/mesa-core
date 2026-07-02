@@ -1,9 +1,8 @@
 """Privacy classification enforcement and caller context (Spec 7, 9.4, 17).
 
 Access to sensitive/restricted entities and all person entities is audit-logged
-through the ``mesa_core.audit`` logger using structured ``extra`` fields. A
-standardised audit event schema is planned for v1.1; any structured format
-satisfies v1.0 (Spec 7.1).
+through the ``mesa_core.audit`` logger; each record carries the standard
+``mesa_audit_event`` dict (mesa_core.audit, Module Proposal Section 8).
 """
 
 from __future__ import annotations
@@ -11,9 +10,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from mesa_core.audit import MesaAuditEvent, audit_logger, emit_audit_event
 from mesa_core.profile import PRIVACY_RANK, PrivacyClassification, PrivacyLevel
-
-audit_logger = logging.getLogger("mesa_core.audit")
 
 
 @dataclass
@@ -118,18 +116,20 @@ class PrivacyEnforcer:
             PrivacyLevel.SENSITIVE
         ]:
             return
-        self._logger.info(
-            "mesa privacy access: entity=%s caller=%s allowed=%s level=%s",
-            entity_id or "<unknown>",
-            caller.caller_id if caller else "<no-context>",
-            decision.allowed,
-            decision.effective_level.value,
-            extra={
-                "mesa_entity_id": entity_id,
-                "mesa_caller_id": caller.caller_id if caller else None,
-                "mesa_roles": caller.effective_roles() if caller else [],
-                "mesa_decision": "allowed" if decision.allowed else "denied",
-                "mesa_effective_level": decision.effective_level.value,
-                "mesa_is_person": is_person,
-            },
+        emit_audit_event(
+            MesaAuditEvent(
+                event_type="privacy_access",
+                action="access",
+                decision="allowed" if decision.allowed else "denied",
+                entity_id=entity_id or None,
+                caller_id=caller.caller_id if caller else None,
+                roles=caller.effective_roles() if caller else [],
+                rule_applied=None if decision.allowed else "privacy:deny_for",
+                redaction_mode=decision.deny_response_mode,
+                details={
+                    "effective_level": decision.effective_level.value,
+                    "is_person": is_person,
+                },
+            ),
+            logger=self._logger,
         )

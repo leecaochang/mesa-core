@@ -91,7 +91,9 @@ def test_sensitive_access_is_audit_logged(caplog: pytest.LogCaptureFixture) -> N
         PrivacyEnforcer().evaluate(sensitive_with_roles(), caller("guest"), entity_id="camera.x")
     records = [r for r in caplog.records if r.name == "mesa_core.audit"]
     assert records
-    assert any(getattr(r, "mesa_decision", "") == "denied" for r in records)
+    events = [getattr(r, "mesa_audit_event", {}) for r in records]
+    assert any(e["decision"] == "denied" for e in events)
+    assert all(e["event_type"] == "privacy_access" for e in events)
 
 
 def test_person_access_always_logged(caplog: pytest.LogCaptureFixture) -> None:
@@ -106,7 +108,9 @@ def test_person_access_always_logged(caplog: pytest.LogCaptureFixture) -> None:
             is_person=True,
         )
     records = [r for r in caplog.records if r.name == "mesa_core.audit"]
-    assert any(getattr(r, "mesa_is_person", False) for r in records)
+    assert any(
+        getattr(r, "mesa_audit_event", {}).get("details", {}).get("is_person") for r in records
+    )
 
 
 def test_normal_access_not_logged(caplog: pytest.LogCaptureFixture) -> None:

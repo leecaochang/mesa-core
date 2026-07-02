@@ -1,5 +1,6 @@
 """mesa-core: reference implementation of the MESA specification."""
 
+from mesa_core.audit import MesaAuditEvent, emit_audit_event
 from mesa_core.conflict import ConflictResolver
 from mesa_core.enforcer import ConfirmationManager, EnforcementResult, MesaEnforcer
 from mesa_core.exceptions import (
@@ -54,6 +55,7 @@ __all__ = [
     "LeaseManager",
     "LeaseNotFoundError",
     "LeaseResponse",
+    "MesaAuditEvent",
     "MesaEnforcementError",
     "MesaEnforcer",
     "MesaError",
@@ -76,6 +78,7 @@ __all__ = [
     "TriggersAutomations",
     "ValidationIssue",
     "ValidationReport",
+    "emit_audit_event",
     "entities_by_role",
     "import_from_integration",
     "migrate_profile",

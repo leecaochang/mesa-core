@@ -16,18 +16,16 @@ no-priority baseline; ``caller_priority`` is accepted but unused.
 from __future__ import annotations
 
 import asyncio
-import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
+from mesa_core.audit import MesaAuditEvent, emit_audit_event
 from mesa_core.exceptions import LeaseNotFoundError, MesaValidationError
 from mesa_core.lease.registry import Lease, LeaseRegistry
 from mesa_core.store import ProfileStore
-
-audit_logger = logging.getLogger("mesa_core.audit")
 
 MAX_LEASE_DURATION_SECONDS = 30.0
 
@@ -101,17 +99,15 @@ class LeaseManager:
     # -- events ------------------------------------------------------------------
 
     def _emit(self, lease: Lease, reason: str, now: datetime) -> None:
-        audit_logger.info(
-            "mesa lease ended: lease=%s reason=%s entities=%s",
-            lease.lease_id,
-            reason,
-            lease.entities,
-            extra={
-                "mesa_lease_id": lease.lease_id,
-                "mesa_caller_id": lease.caller_id,
-                "mesa_entities": list(lease.entities),
-                "mesa_decision": reason,
-            },
+        emit_audit_event(
+            MesaAuditEvent(
+                event_type="lease",
+                action="lease_ended",
+                decision=reason,
+                caller_id=lease.caller_id,
+                timestamp=now.isoformat(),
+                details={"lease_id": lease.lease_id, "entities": list(lease.entities)},
+            )
         )
         if self.on_lease_event is not None:
             self.on_lease_event(
@@ -280,19 +276,20 @@ class LeaseManager:
                     preemption_handling=preemption_handling,
                 )
             )
-        audit_logger.info(
-            "mesa lease request: lease=%s caller=%s granted=%s denied=%s",
-            lease_id,
-            caller_id,
-            entities_granted,
-            entities_denied,
-            extra={
-                "mesa_lease_id": lease_id,
-                "mesa_caller_id": caller_id,
-                "mesa_entities": list(entities),
-                "mesa_decision": "granted" if entities_granted else "denied",
-                "mesa_intent": intent,
-            },
+        emit_audit_event(
+            MesaAuditEvent(
+                event_type="lease",
+                action="lease_request",
+                decision="granted" if entities_granted else "denied",
+                caller_id=caller_id,
+                timestamp=now.isoformat(),
+                details={
+                    "lease_id": lease_id,
+                    "entities_granted": list(entities_granted),
+                    "entities_denied": list(entities_denied),
+                    "intent": intent,
+                },
+            )
         )
         return LeaseResponse(
             lease_id=lease_id,
