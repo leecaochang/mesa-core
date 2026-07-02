@@ -7,7 +7,10 @@ and unsafe declaration: agents will skip cascade caution for it.
 
 mesa-core never calls HA: the host provides automation configs through the
 ``get_automation_configs`` callback, from any source (REST API, YAML parse, or
-test fixture).
+test fixture). Automations can also reference entities indirectly, through
+device triggers and the target selectors of named triggers (HA 2026.7+);
+resolving those requires the host's ``expand_target`` callback, because only
+the host can query the HA registries.
 """
 
 from __future__ import annotations
@@ -26,6 +29,11 @@ _SECTION_KEYS = {
     "action": ("action", "actions"),
 }
 
+# Selector keys that reference entities indirectly (device triggers/conditions,
+# and the target blocks of named triggers). Only the host can resolve these
+# against the HA registries.
+_TARGET_KEYS = ("area_id", "device_id", "floor_id", "label_id")
+
 
 @dataclass
 class ValidationIssue:
@@ -37,22 +45,32 @@ class ValidationIssue:
     recommendation: str
 
 
-def _collect_entity_ids(node: Any, found: set[str]) -> None:
+def _collect_references(
+    node: Any, entities: set[str], targets: set[tuple[str, str]]
+) -> None:
     if isinstance(node, dict):
         for key, value in node.items():
             if key == "entity_id":
                 if isinstance(value, str):
-                    found.add(value)
+                    entities.add(value)
                 elif isinstance(value, list):
-                    found.update(v for v in value if isinstance(v, str))
+                    entities.update(v for v in value if isinstance(v, str))
+            elif key in _TARGET_KEYS:
+                if isinstance(value, str):
+                    targets.add((key, value))
+                elif isinstance(value, list):
+                    targets.update((key, v) for v in value if isinstance(v, str))
             else:
-                _collect_entity_ids(value, found)
+                _collect_references(value, entities, targets)
     elif isinstance(node, list):
         for item in node:
-            _collect_entity_ids(item, found)
+            _collect_references(item, entities, targets)
 
 
-def entities_by_role(config: dict[str, Any]) -> dict[str, set[str]]:
+def entities_by_role(
+    config: dict[str, Any],
+    expand_target: Callable[[str, str], list[str]] | None = None,
+) -> dict[str, set[str]]:
     """Entities referenced in an automation config, keyed by role.
 
     Returns a dict with keys ``"trigger"``, ``"condition"``, and ``"action"``,
@@ -60,19 +78,35 @@ def entities_by_role(config: dict[str, Any]) -> dict[str, set[str]]:
     singular/plural HA section keys transparently. This is the canonical
     automation-config traversal; hosts building reverse-reference indexes
     should call this rather than reimplementing the entity-ID walk.
+
+    ``expand_target`` resolves indirect references: it is called once per
+    target selector found (``kind`` is one of ``area_id``, ``device_id``,
+    ``floor_id``, ``label_id``; ``ref`` is the selector value) and returns the
+    entity IDs that selector covers in the deployment. Without the callback,
+    indirectly referenced entities are invisible to the walk.
     """
     result: dict[str, set[str]] = {}
     for role, keys in _SECTION_KEYS.items():
-        found: set[str] = set()
+        entities: set[str] = set()
+        targets: set[tuple[str, str]] = set()
         for key in keys:
             if key in config:
-                _collect_entity_ids(config[key], found)
-        result[role] = found
+                _collect_references(config[key], entities, targets)
+        if expand_target is not None:
+            for kind, ref in targets:
+                entities.update(expand_target(kind, ref))
+        result[role] = entities
     return result
 
 class TriggerValidator:
-    def __init__(self, store: ProfileStore) -> None:
+    def __init__(
+        self,
+        store: ProfileStore,
+        *,
+        expand_target: Callable[[str, str], list[str]] | None = None,
+    ) -> None:
         self.store = store
+        self.expand_target = expand_target
 
     def _declared_none_entities(self) -> list[str]:
         entities = []
@@ -93,7 +127,7 @@ class TriggerValidator:
         issues: list[ValidationIssue] = []
         for config in configs:
             automation_id = str(config.get("id", "<unknown>"))
-            by_role = entities_by_role(config)
+            by_role = entities_by_role(config, self.expand_target)
             # Only trigger and condition references invalidate a none declaration
             # (Spec 5.5): an entity written by an action does not trigger automations.
             for role, severity in (("trigger", "error"), ("condition", "warning")):

@@ -6,7 +6,7 @@ from typing import Any
 
 from mesa_core.backends import MemoryBackend
 from mesa_core.store import ProfileStore
-from mesa_core.trigger_validator import TriggerValidator
+from mesa_core.trigger_validator import TriggerValidator, entities_by_role
 
 from .test_conflict import make_profile
 
@@ -91,6 +91,63 @@ def test_entity_id_lists_and_plural_keys() -> None:
     issues = validator.validate(lambda: AUTOMATIONS)
     assert len(issues) == 1
     assert issues[0].automation_id == "automation.plural_keys"
+
+
+# Named triggers (HA 2026.7+) reference entities through target selectors;
+# device conditions reference them through device_id. Neither names an entity.
+TARGETED_AUTOMATIONS: list[dict[str, Any]] = [
+    {
+        "id": "automation.movie_mode",
+        "triggers": [
+            {"trigger": "occupancy.detected", "target": {"area_id": "area.living_room"}}
+        ],
+        "conditions": [{"condition": "device", "device_id": "washer-device-1"}],
+        "actions": [],
+    },
+]
+
+
+def expand(kind: str, ref: str) -> list[str]:
+    registry = {
+        ("area_id", "area.living_room"): ["binary_sensor.lr_motion"],
+        ("device_id", "washer-device-1"): ["sensor.washer_status"],
+    }
+    return registry.get((kind, ref), [])
+
+
+def test_target_selector_reference_flagged_with_expand_target() -> None:
+    validator = TriggerValidator(
+        store=store_with_none("binary_sensor.lr_motion"), expand_target=expand
+    )
+    issues = validator.validate(lambda: TARGETED_AUTOMATIONS)
+    assert len(issues) == 1
+    assert issues[0].role == "trigger"
+    assert issues[0].severity == "error"
+    assert issues[0].automation_id == "automation.movie_mode"
+
+
+def test_device_condition_reference_flagged_with_expand_target() -> None:
+    validator = TriggerValidator(
+        store=store_with_none("sensor.washer_status"), expand_target=expand
+    )
+    issues = validator.validate(lambda: TARGETED_AUTOMATIONS)
+    assert len(issues) == 1
+    assert issues[0].role == "condition"
+    assert issues[0].severity == "warning"
+
+
+def test_target_selector_invisible_without_expand_target() -> None:
+    # Documented limitation: without the callback, only explicit entity_id
+    # references are seen, so indirect references produce no issues.
+    validator = TriggerValidator(store=store_with_none("binary_sensor.lr_motion"))
+    assert validator.validate(lambda: TARGETED_AUTOMATIONS) == []
+
+
+def test_entities_by_role_expands_targets() -> None:
+    by_role = entities_by_role(TARGETED_AUTOMATIONS[0], expand_target=expand)
+    assert by_role["trigger"] == {"binary_sensor.lr_motion"}
+    assert by_role["condition"] == {"sensor.washer_status"}
+    assert by_role["action"] == set()
 
 
 def test_validate_entity_single_path() -> None:
