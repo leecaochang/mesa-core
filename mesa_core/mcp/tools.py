@@ -2,7 +2,9 @@
 
 ``register_mesa_tools`` is the host server's single integration point: it
 registers mesa_query_profiles, mesa_get_profile, mesa_explain_profile, and
-mesa_get_caller_context into the host's tool registry via an adapter.
+mesa_get_caller_context into the host's tool registry via an adapter, plus
+the lease coordination tools (mesa_request_lease, mesa_release_lease) when a
+``lease_manager`` is provided.
 
 Errors are returned as the Spec 9.6 envelope:
 ``{"error": code, "message": str, "details": {}}``.
@@ -14,8 +16,14 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from mesa_core.exceptions import InvalidCursorError, MesaError, MesaValidationError
+from mesa_core.exceptions import (
+    InvalidCursorError,
+    LeaseNotFoundError,
+    MesaError,
+    MesaValidationError,
+)
 from mesa_core.inheritance import InheritanceResolver
+from mesa_core.lease import LeaseManager
 from mesa_core.mcp.adapters import ToolRegistry
 from mesa_core.mcp.schemas import TOOL_DESCRIPTIONS, TOOL_SCHEMAS
 from mesa_core.privacy import CallerContext
@@ -43,10 +51,12 @@ class MesaToolHandlers:
         store: ProfileStore,
         resolver: InheritanceResolver | None = None,
         caller_context_fn: Callable[[], CallerContext] | None = None,
+        lease_manager: LeaseManager | None = None,
     ) -> None:
         self.store = store
         self.resolver = resolver or InheritanceResolver(store=store)
         self.caller_context_fn = caller_context_fn
+        self.lease_manager = lease_manager
 
     # -- helpers ---------------------------------------------------------------
 
@@ -187,6 +197,70 @@ class MesaToolHandlers:
             logger.exception("mesa_get_caller_context failed")
             return _error("server_error", "internal error in mesa_get_caller_context")
 
+    # -- lease tools (Enrichment Section 21) --------------------------------------
+
+    async def mesa_request_lease(self, params: dict[str, Any]) -> dict[str, Any]:
+        assert self.lease_manager is not None  # registered only when provided
+        try:
+            entities = params.get("entities")
+            if not entities or not isinstance(entities, list):
+                return _error(
+                    "invalid_query", "entities is required and must be a non-empty array"
+                )
+            duration = params.get("duration_seconds")
+            if duration is None:
+                return _error("invalid_query", "duration_seconds is required")
+            caller = self._caller_context() or _ANONYMOUS
+            response = await self.lease_manager.arequest(
+                [str(e) for e in entities],
+                float(duration),
+                session_id=caller.session_id,
+                caller_id=caller.caller_id,
+                intent=params.get("intent"),
+                priority_level=params.get("priority_level", "cooperative"),
+                preemption_handling=params.get("preemption_handling", "rollback_abort"),
+                caller_priority=params.get("caller_priority"),
+            )
+            if not response.granted and response.automation_denials and set(
+                response.automation_denials
+            ) == set(response.entities_denied):
+                # Total denial by protected/critical automations (Spec 9.6).
+                return _error(
+                    "lease_conflict",
+                    "lease denied: all requested entities are under protected or "
+                    "critical automation control",
+                    details={"denial_reasons": response.denial_reasons},
+                )
+            return {"mesa_version": MESA_VERSION, **response.to_dict()}
+        except (TypeError, ValueError) as err:
+            return _error("invalid_query", str(err))
+        except Exception:
+            logger.exception("mesa_request_lease failed")
+            return _error("server_error", "internal error in mesa_request_lease")
+
+    async def mesa_release_lease(self, params: dict[str, Any]) -> dict[str, Any]:
+        assert self.lease_manager is not None  # registered only when provided
+        try:
+            lease_id = params.get("lease_id")
+            if not lease_id:
+                return _error("invalid_query", "lease_id is required")
+            caller = self._caller_context()
+            lease = await self.lease_manager.arelease(
+                str(lease_id),
+                session_id=caller.session_id if caller is not None else None,
+            )
+            return {
+                "mesa_version": MESA_VERSION,
+                "released": True,
+                "lease_id": lease.lease_id,
+                "entities": list(lease.entities),
+            }
+        except LeaseNotFoundError as err:
+            return _error("lease_not_found", str(err))
+        except Exception:
+            logger.exception("mesa_release_lease failed")
+            return _error("server_error", "internal error in mesa_release_lease")
+
 
 def register_mesa_tools(
     store: ProfileStore,
@@ -195,7 +269,7 @@ def register_mesa_tools(
     *,
     resolver: InheritanceResolver | None = None,
     enforcer: Any = None,
-    lease_manager: Any = None,
+    lease_manager: LeaseManager | None = None,
     caller_context_fn: Callable[[], CallerContext] | None = None,
 ) -> ToolRegistry:
     """Register all MESA MCP tools into the host server's tool registry.
@@ -203,11 +277,12 @@ def register_mesa_tools(
     ``adapter`` is "fastmcp", "raw_sdk", or any object implementing the
     ToolRegistry protocol. Returns the registry used.
 
-    ``lease_manager`` is accepted for forward compatibility: lease tools ship
-    in mesa-core v1.1 and the parameter is ignored in v1.0. ``enforcer`` is
-    likewise accepted for API stability; enforcement is wired into the host's
-    service-call path directly (see the Module Proposal, Section 6.2), not
-    exposed as a tool.
+    When ``lease_manager`` is provided, the lease coordination tools
+    (mesa_request_lease, mesa_release_lease) are registered as well; omitted,
+    they are not, and the server does not participate in the Section 21
+    protocol. ``enforcer`` is accepted for API stability; enforcement is
+    wired into the host's service-call path directly (see the Module
+    Proposal, Section 6.2), not exposed as a tool.
     """
     registry: ToolRegistry
     if isinstance(adapter, str):
@@ -226,19 +301,21 @@ def register_mesa_tools(
     else:
         registry = adapter
 
-    if lease_manager is not None:
-        logger.warning(
-            "lease_manager was provided but lease tools ship in mesa-core v1.1; ignored"
-        )
-
     handlers = MesaToolHandlers(
-        store=store, resolver=resolver, caller_context_fn=caller_context_fn
+        store=store,
+        resolver=resolver,
+        caller_context_fn=caller_context_fn,
+        lease_manager=lease_manager,
     )
-    for name, handler in (
+    tools = [
         ("mesa_query_profiles", handlers.mesa_query_profiles),
         ("mesa_get_profile", handlers.mesa_get_profile),
         ("mesa_explain_profile", handlers.mesa_explain_profile),
         ("mesa_get_caller_context", handlers.mesa_get_caller_context),
-    ):
+    ]
+    if lease_manager is not None:
+        tools.append(("mesa_request_lease", handlers.mesa_request_lease))
+        tools.append(("mesa_release_lease", handlers.mesa_release_lease))
+    for name, handler in tools:
         registry.register_tool(name, handler, TOOL_SCHEMAS[name], TOOL_DESCRIPTIONS[name])
     return registry

@@ -4,12 +4,14 @@ from mesa_core.conflict import ConflictResolver
 from mesa_core.enforcer import ConfirmationManager, EnforcementResult, MesaEnforcer
 from mesa_core.exceptions import (
     InvalidCursorError,
+    LeaseNotFoundError,
     MesaEnforcementError,
     MesaError,
     MesaValidationError,
 )
 from mesa_core.inheritance import InheritanceResolver, ProfileExplanation
 from mesa_core.integration_import import import_from_integration
+from mesa_core.lease import Lease, LeaseManager, LeaseResponse
 from mesa_core.migration import migrate_profile
 from mesa_core.privacy import AccessDecision, CallerContext, PrivacyEnforcer
 from mesa_core.profile import (
@@ -48,6 +50,10 @@ __all__ = [
     "EnforcementResult",
     "InheritanceResolver",
     "InvalidCursorError",
+    "Lease",
+    "LeaseManager",
+    "LeaseNotFoundError",
+    "LeaseResponse",
     "MesaEnforcementError",
     "MesaEnforcer",
     "MesaError",

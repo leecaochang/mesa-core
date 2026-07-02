@@ -32,3 +32,12 @@ class MesaEnforcementError(MesaError):
         super().__init__(reason)
         self.reason = reason
         self.rule_applied = rule_applied
+
+
+class LeaseNotFoundError(MesaError):
+    """A lease ID does not exist, has expired, or belongs to another session.
+
+    Maps to the ``lease_not_found`` error envelope (Spec 9.6). Deliberately
+    does not distinguish "expired" from "another session's lease": a denied
+    agent is not informed of other agents' leases (Enrichment 21.6).
+    """

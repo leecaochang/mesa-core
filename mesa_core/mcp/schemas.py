@@ -25,6 +25,14 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "mesa_get_caller_context": (
         "Retrieve caller identity and roles for the current session."
     ),
+    "mesa_request_lease": (
+        "Request a temporary advisory coordination lease on entities (max 30s). "
+        "Not a lock: native automations remain unaware. Partial grants are valid; "
+        "denial_reasons explains denied entities."
+    ),
+    "mesa_release_lease": (
+        "Release a held coordination lease early to signal completion."
+    ),
 }
 
 TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
@@ -62,6 +70,38 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         },
     },
     "mesa_get_caller_context": {"type": "object", "properties": {}},
+    "mesa_request_lease": {
+        "type": "object",
+        "required": ["entities", "duration_seconds"],
+        "properties": {
+            "entities": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+            "duration_seconds": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "Requested duration; values above 30 are clamped (Spec 21.2).",
+            },
+            "intent": {"type": "string"},
+            "priority_level": {
+                "enum": ["deferential", "cooperative", "assertive"],
+                "default": "cooperative",
+            },
+            "caller_priority": {
+                "type": "number",
+                "minimum": 0.0,
+                "maximum": 1.0,
+                "description": "Accepted but unused until multi-agent resolution (Spec 21.6).",
+            },
+            "preemption_handling": {
+                "enum": ["rollback_abort", "continue_ignore"],
+                "default": "rollback_abort",
+            },
+        },
+    },
+    "mesa_release_lease": {
+        "type": "object",
+        "required": ["lease_id"],
+        "properties": {"lease_id": {"type": "string"}},
+    },
 }
 
 
@@ -73,8 +113,8 @@ def tools_schema_document() -> dict[str, Any]:
         "title": "MESA MCP tool input schemas",
         "description": (
             "Input schemas for the MESA retrieval API tools (MESA Specification "
-            "Section 9). Lease tools (mesa_request_lease, mesa_release_lease) ship "
-            "in mesa-core v1.1."
+            "Section 9) and the lease coordination tools (MESA Enrichment "
+            "Section 21)."
         ),
         "tools": {
             name: {"description": TOOL_DESCRIPTIONS[name], "inputSchema": schema}

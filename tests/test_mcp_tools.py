@@ -8,10 +8,12 @@ from pathlib import Path
 from typing import Any
 
 from mesa_core.backends import MemoryBackend
+from mesa_core.lease import LeaseManager
 from mesa_core.mcp.adapters import DictToolRegistry
 from mesa_core.mcp.schemas import TOOL_SCHEMAS, tools_schema_document
 from mesa_core.mcp.tools import register_mesa_tools
 from mesa_core.privacy import CallerContext
+from mesa_core.profile import SemanticProfile
 from mesa_core.store import ProfileStore
 
 from .conformance.test_conflict import make_profile
@@ -226,11 +228,69 @@ def test_caller_context_included_in_query_envelope() -> None:
     assert result["caller_context"]["caller_id"] == "user.alice"
 
 
-def test_lease_manager_param_ignored_in_v1(caplog: Any) -> None:
-    registry = DictToolRegistry()
+def test_lease_tools_registered_only_with_manager() -> None:
+    registry, _ = make_registry()
+    assert set(registry.tools) == TOOL_NAMES  # no lease_manager, no lease tools
+
+    with_leases = DictToolRegistry()
     store = ProfileStore(backend=MemoryBackend())
-    register_mesa_tools(store, adapter=registry, lease_manager=object())
-    assert set(registry.tools) == TOOL_NAMES  # no lease tools registered
+    register_mesa_tools(store, adapter=with_leases, lease_manager=LeaseManager(store))
+    assert set(with_leases.tools) == TOOL_NAMES | {"mesa_request_lease", "mesa_release_lease"}
+
+
+def _lease_registry() -> DictToolRegistry:
+    store = ProfileStore(backend=MemoryBackend())
+    store.set(
+        "automation.smoke",
+        SemanticProfile.from_dict(
+            "automation.smoke",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {"source": "user"},
+                    "cooperative_priority": {"level": "critical"},
+                    "environmental_dependencies": {"trigger_entities": ["switch.siren"]},
+                }
+            },
+        ),
+    )
+    registry = DictToolRegistry()
+    ctx = CallerContext(
+        caller_id="agent.a", roles=[], is_authenticated=True, session_id="sess-1"
+    )
+    register_mesa_tools(
+        store,
+        adapter=registry,
+        lease_manager=LeaseManager(store),
+        caller_context_fn=lambda: ctx,
+    )
+    return registry
+
+
+def test_lease_request_and_release_round_trip() -> None:
+    registry = _lease_registry()
+    granted = call(registry, "mesa_request_lease", entities=["light.x"], duration_seconds=10)
+    assert granted["mesa_version"] == "1.0"
+    assert granted["granted"] and granted["entities_granted"] == ["light.x"]
+
+    released = call(registry, "mesa_release_lease", lease_id=granted["lease_id"])
+    assert released["released"] and released["entities"] == ["light.x"]
+
+    again = call(registry, "mesa_release_lease", lease_id=granted["lease_id"])
+    assert again["error"] == "lease_not_found"
+
+
+def test_lease_conflict_envelope_for_total_automation_denial() -> None:
+    registry = _lease_registry()
+    result = call(registry, "mesa_request_lease", entities=["switch.siren"], duration_seconds=10)
+    assert result["error"] == "lease_conflict"
+    assert "switch.siren" in result["details"]["denial_reasons"]
+
+
+def test_lease_request_missing_params_rejected() -> None:
+    registry = _lease_registry()
+    assert call(registry, "mesa_request_lease", duration_seconds=10)["error"] == "invalid_query"
+    assert call(registry, "mesa_request_lease", entities=["light.x"])["error"] == "invalid_query"
+    assert call(registry, "mesa_release_lease")["error"] == "invalid_query"
 
 
 def test_shipped_tools_schema_in_sync() -> None:
