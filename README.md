@@ -78,6 +78,8 @@ Adapters ship for FastMCP and the MCP Python SDK (`pip install "mesa-core[fastmc
 
 Passing `lease_manager=LeaseManager(store)` also registers the advisory coordination tools (`mesa_request_lease`, `mesa_release_lease`), which let cooperating agents signal short-lived intent to each other. They are signals, not locks; see Enrichment Section 21 before relying on them.
 
+With a `get_semantic_moments` callback, `mesa_get_profile` can also surface the purpose-specific triggers and conditions an entity participates in (Home Assistant 2026.7+), live from HA, for agent context only.
+
 ## Loading profiles shipped by integrations
 
 An HA integration can ship a `mesa_profile.json` describing its own devices. Load it with:
@@ -100,7 +102,7 @@ if profile is not None:
 
 ## Status
 
-mesa-core v1.1 is ready for use: profile storage and inheritance, enforcement with confirmation, the MCP retrieval tools, privacy controls, and the advisory lease protocol are all implemented.
+mesa-core v1.2 is ready for use: profile storage and inheritance, enforcement with confirmation, temporal constraints including solar conditions, the MCP retrieval tools, privacy controls, the advisory lease protocol, and portable profile export/import are all implemented. Multi-agent lease preemption is planned for v2.
 
 ```bash
 git clone https://github.com/sfox38/mesa-core

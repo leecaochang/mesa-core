@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mesa-core"
-version = "1.1.0"
+version = "1.2.0"
 description = "Reference implementation of the MESA specification: a semantic safety and coordination layer for AI-operated smart environments."
 readme = "README.md"
 requires-python = ">=3.11"

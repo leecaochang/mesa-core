@@ -63,7 +63,7 @@ mesa-core provides five capabilities that any MCP server can use independently o
 
 **Privacy enforcement.** Given a caller context (identity and roles) and an entity's privacy classification, mesa-core determines whether the caller may access the entity and what restrictions apply. The host server provides the caller context; mesa-core applies the MESA role resolution rules.
 
-**Profile inheritance and conflict resolution.** When a single entity has profiles at multiple levels (domain, area, entity), mesa-core resolves them into a single effective profile following the rules defined in the MESA Specification (Sections 5.6 and 5.7). The host server receives a fully resolved profile without needing to understand the inheritance logic.
+**Profile inheritance and conflict resolution.** When a single entity has profiles at multiple levels (domain, integration, area, entity), mesa-core resolves them into a single effective profile following the rules defined in the MESA Specification (Sections 5.6 and 5.7). The host server receives a fully resolved profile without needing to understand the inheritance logic.
 
 ---
 
@@ -485,7 +485,7 @@ store.set_deployment_defaults(DeploymentDefaults(
 ))
 ```
 
-This default applies **only as a fallback**: it fills `control_mode` solely when no profile at any level (entity, area, or domain) declares it. It does not participate in the Rule A most-restrictive comparison, so an entity (or its area/domain) that declares `autonomous` stays `autonomous`; a restrictive default never dominates a declared value. Two practical notes for fail-closed operators:
+This default applies **only as a fallback**: it fills `control_mode` solely when no profile at any level (entity, area, integration, or domain) declares it. It does not participate in the Rule A most-restrictive comparison, so an entity (or any of its scope levels) that declares `autonomous` stays `autonomous`; a restrictive default never dominates a declared value. Two practical notes for fail-closed operators:
 
 - `prohibited` hard-blocks only when the call is evaluated in enforced mode; in advisory mode it passes with a warning. Pair a `prohibited` default with enforced evaluation. (`read_only` blocks regardless of enforcement mode, but it asserts entity nature rather than policy, so `prohibited` is the better fit for "not yet granted.")
 - `control_mode` gates control (writes/service calls) only; it never gates reads. mesa-core has no blanket read-deny default, and privacy denial is role-based (`access_roles.deny_for`), not a configurable default. Read/visibility fail-closed remains the host's responsibility.
@@ -505,7 +505,7 @@ This default applies **only as a fallback**: it fills `control_mode` solely when
 
 ### 4.5 InheritanceResolver
 
-Resolves the effective profile for an entity by merging domain-level, area-level, and entity-level profiles following the MESA inheritance rules (Specification Section 5.6).
+Resolves the effective profile for an entity by merging domain-level, integration-level, area-level, and entity-level profiles following the MESA inheritance rules (Specification Section 5.6).
 
 ```python
 from mesa_core.inheritance import InheritanceResolver
@@ -562,12 +562,12 @@ merged = resolver.merge(higher_authority_profile, lower_authority_profile)
 - **Rule A:** `control_mode` tightening-only. `prohibited` > `confirm` > `autonomous` regardless of authority. Sole exception: an entity-level `user`-origin profile may loosen an inherited `confirm` to `autonomous` via `override_control_mode: true` with `control_reason`. `prohibited` and `read_only` never loosen.
 - **Rule B:** `triggers_automations: likely` sticky upward. `deployment_defined` at entity scope overrides.
 - **Rule C:** Privacy level most-restrictive-wins. `restricted` > `sensitive` > `normal` > `public`.
-- **Rule D:** Scope-then-origin for all other fields. Most specific scope wins (`entity` > `area` > `domain`) among trusted origins (`developer`, `user`, `hybrid`); origin breaks scope ties. `inferred_ai` and `unknown` never override trusted-tier declarations at any scope; among themselves the same scope-then-origin rule applies, with `inferred_ai` > `unknown`.
+- **Rule D:** Scope-then-origin for all other fields. Most specific scope wins (`entity` > `area` > `integration` > `domain`) among trusted origins (`developer`, `user`, `hybrid`); origin breaks scope ties. `inferred_ai` and `unknown` never override trusted-tier declarations at any scope; among themselves the same scope-then-origin rule applies, with `inferred_ai` > `unknown`.
 - **Rule E:** Absence is not a conflict. Missing fields are inherited, not defaulted.
 
 ### 4.7 TemporalEvaluator
 
-Evaluates temporal constraints against the current time and HA state. Returns whether any constraint modifies the effective boundary.
+Evaluates temporal constraints against the current time, calendar state, and solar elevation, supplied through host callbacks. Returns whether any constraint modifies the effective boundary.
 
 ```python
 from mesa_core.temporal import TemporalEvaluator
@@ -676,7 +676,7 @@ entities_by_role(config: dict, expand_target=None) -> dict[str, set[str]]
 
 Given a single automation config dict, it returns the entity IDs referenced in each block, handling the singular/plural HA section keys (`trigger`/`triggers`, etc.) transparently. This is the canonical traversal for automation configs. Hosts building reverse-reference indexes (entity -> automations that reference it) SHOULD call `entities_by_role` over their own automation configs rather than reimplementing the entity-ID walk, so that HA-config-format knowledge stays in one place. mesa-core deliberately does not provide the reverse index, relationship graph, or script/scene traversal itself; those remain host concerns layered on this primitive.
 
-**Indirect entity references.** Automations can reference entities without naming them: device triggers and conditions carry a `device_id`, and named triggers (HA 2026.7+) take `target` blocks with `area_id`, `floor_id`, `label_id`, or `device_id` selectors. Only the host can resolve these against the HA registries. Both `TriggerValidator` and `entities_by_role` accept an optional `expand_target(kind, ref)` callback, called once per selector found, that returns the entity IDs the selector covers in the deployment. Without the callback, indirectly referenced entities are invisible to validation, and a stale `none` declaration on such an entity will pass unflagged. Hosts SHOULD provide the callback (Specification Section 5.5).
+**Indirect entity references.** Automations can reference entities without naming them: device triggers and conditions carry a `device_id`, and purpose-specific triggers (HA 2026.7+) take `target` blocks with `area_id`, `floor_id`, `label_id`, or `device_id` selectors. Only the host can resolve these against the HA registries. Both `TriggerValidator` and `entities_by_role` accept an optional `expand_target(kind, ref)` callback, called once per selector found, that returns the entity IDs the selector covers in the deployment. Without the callback, indirectly referenced entities are invisible to validation, and a stale `none` declaration on such an entity will pass unflagged. Hosts SHOULD provide the callback (Specification Section 5.5).
 
 **When to run validation:** Level 2 and Level 3 host servers SHOULD run `TriggerValidator.validate()` (or `avalidate()`) at startup and whenever the automation registry changes (detected via the `automation_reloaded` HA event). Validation results SHOULD be surfaced to operators through the server's configuration interface and included in `mesa_explain_profile` output.
 
@@ -839,9 +839,9 @@ Output: results array, total_matched, pagination metadata, caller_context if ava
 
 **mesa_get_profile**
 
-Input: entity_id, include_diagnostic flag.
-Action: calls `store.get_effective()`, optionally fetches diagnostic profile.
-Output: complete resolved profile for the entity, staleness_status for inferred profiles.
+Input: entity_id, include_diagnostic flag, include_semantic_moments flag.
+Action: calls `store.get_effective()`, optionally fetches diagnostic profile; when `include_semantic_moments` is requested and the host supplies the `get_semantic_moments` callback, attaches the purpose-specific triggers and conditions (HA 2026.7+) the entity participates in.
+Output: complete resolved profile for the entity, staleness_status for inferred profiles, optional `semantic_moments` array (live HA introspection for agent context; never stored, never consulted by enforcement, and no more trustworthy than the integration that defined the moment).
 
 **mesa_explain_profile**
 
@@ -1007,8 +1007,9 @@ mesa-core never talks to Home Assistant. Every piece of HA registry or state kno
 | `get_calendar_events` | `TemporalEvaluator` | `calendar_entity` conditions are unevaluable and treated as active (fail-closed). Note `duration` and `relative_to_event` conditions validate but are unevaluable in 1.x regardless, and also fail closed. |
 | `get_solar_elevation` | `TemporalEvaluator` (via `MesaEnforcer`) | `solar_angle` conditions are unevaluable and treated as active (fail-closed). |
 | `get_automation_configs` | `TriggerValidator` (per call) | No automation cross-reference is possible. |
-| `expand_target` | `TriggerValidator`, `entities_by_role` | Indirect references (device triggers, named-trigger target selectors) are invisible; a stale `none` declaration behind them passes unflagged. |
+| `expand_target` | `TriggerValidator`, `entities_by_role` | Indirect references (device triggers, purpose-specific trigger target selectors) are invisible; a stale `none` declaration behind them passes unflagged. |
 | `caller_context_fn` | `register_mesa_tools` | Tools respond as an anonymous, role-less caller; lease session scoping degrades. |
+| `get_semantic_moments` | `register_mesa_tools` / `MesaToolHandlers` | `mesa_get_profile` never includes the `semantic_moments` block; agents fall back to profile-declared automation semantics. |
 | `on_lease_event` | `LeaseManager` | `mesa_lease_expired` events are not bridged to the HA event bus. |
 
 ---
@@ -1100,7 +1101,7 @@ mesa-core 1.x implements the MESA Specification at Levels 1 and 2 in full and at
 
 **ProfileStore async parity.** Async variants for domain-, integration-, and area-scope profile get/set, deployment defaults, and key enumeration, plus `explain()` / `aexplain()` delegation, completing the "every public method has an async variant" contract of Section 4.2.
 
-**Indirect automation references.** The `expand_target` callback on `TriggerValidator` and `entities_by_role` resolves `area_id` / `floor_id` / `label_id` / `device_id` selectors (device triggers, and the target blocks of HA 2026.7+ named triggers) so stale `triggers_automations: none` declarations behind indirect references are caught. See Section 4.8.
+**Indirect automation references.** The `expand_target` callback on `TriggerValidator` and `entities_by_role` resolves `area_id` / `floor_id` / `label_id` / `device_id` selectors (device triggers, and the target blocks of HA 2026.7+ purpose-specific triggers) so stale `triggers_automations: none` declarations behind indirect references are caught. See Section 4.8.
 
 **Lease protocol.** `LeaseManager` with request, release, session release, and automatic (lazy) expiry; `mesa_lease_expired` events via the `on_lease_event` callback; protected/critical automation denial (fail-closed); `binary_sensor.mesa_lease_active` state via `sensor_state()`; and the `mesa_request_lease` / `mesa_release_lease` MCP tools, registered when `register_mesa_tools` receives a `lease_manager`. Overlapping requests are resolved existing-holder-wins; priority preemption (Enrichment 21.6) remains v2. See Section 4.10.
 
@@ -1111,6 +1112,8 @@ mesa-core 1.x implements the MESA Specification at Levels 1 and 2 in full and at
 **Profile export and import.** `export_profiles()` / `import_profiles()` and their async variants: the portable archive format for moving complete profile sets between deployments, backends, and host servers. Faithful export, validated import, explicit conflict policy. See Section 4.12. The `mesa-lint` CLI also shipped in this cycle as a separate package (https://github.com/sfox38/mesa-lint).
 
 **Solar-angle temporal conditions.** The `solar_angle` condition type evaluates through the `get_solar_elevation` host callback: each `solar_event` is an elevation-boundary crossing, and `solar_offset_minutes` shifts the transition by sampling the elevation in the past. No astronomy dependency; without the callback the condition stays fail-closed as in 1.1. See Section 4.7.
+
+**Semantic moments (HA 2026.7+ purpose-specific triggers).** `mesa_get_profile` accepts `include_semantic_moments` and, when the host supplies the `get_semantic_moments` callback, returns the purpose-specific triggers and conditions the entity participates in. Consumed live from HA at request time, never stored in profiles (so it cannot go stale), never consulted by enforcement, and documented as carrying no MESA authority.
 
 ### Deferred to Version 2
 
@@ -1128,8 +1131,6 @@ mesa-core 1.x implements the MESA Specification at Levels 1 and 2 in full and at
 ---
 
 ## 9. Future Versions
-
-**Version 1.2 (in progress).** Semantic-moment consumption of HA named triggers (2026.7+) via host callbacks, if integrator demand appears.
 
 **Version 2.0.** Multi-agent lease collision resolution. Snapshot management for reversible automations. `binary_sensor.mesa_lease_active` entity support. Additional framework adapters (Node.js MCP SDK if demand exists).
 
