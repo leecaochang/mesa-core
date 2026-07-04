@@ -89,7 +89,7 @@ Describes how effects in this area propagate to other areas through physical cha
 
 Automation profiles allow agents to reason about the automation landscape before taking action, avoiding conflicts and race conditions.
 
-**Storage note.** The HA UI editor rewrites automation YAML on save and removes unrecognised keys including `semantic_profile`. Automation profiles embedded directly in automation YAML will be lost when edited through the UI. The recommended approach is to store automation profiles in an MCP server integrating mesa-core's configuration interface, keyed by automation ID. YAML embedding is suitable only for automations managed exclusively through direct YAML editing. Native HA UI support for MESA profile editing is a planned capability.
+**Storage note.** The HA UI editor rewrites automation YAML on save and removes unrecognised keys including `semantic_profile`. Automation profiles embedded directly in automation YAML will be lost when edited through the UI. The recommended approach is to store automation profiles in an MCP server integrating mesa-core's configuration interface, keyed by automation ID. YAML embedding is suitable only for automations managed exclusively through direct YAML editing. Profile editing UIs are provided by host servers integrating mesa-core, not by MESA itself.
 
 ### 11.1 Intent Archetype
 
@@ -257,7 +257,7 @@ Helpers (input_boolean, input_number, input_text, input_select, input_datetime, 
 - Through `customize.yaml` in `configuration.yaml`. Profiles added here persist through UI edits because `customize.yaml` is not rewritten by the HA UI. Requires a config reload after changes.
 - Through `extra_state_attributes` populated by a small custom integration at startup.
 
-Native HA UI support for MESA profile editing is a planned community capability. Without profiles, agents cannot distinguish a cosmetic dashboard toggle from a critical mode flag driving dozens of automations.
+Profile editing UIs are the host server's concern; MESA defines the data, not the editor. Without profiles, agents cannot distinguish a cosmetic dashboard toggle from a critical mode flag driving dozens of automations.
 
 **Common fields for all helper types:**
 

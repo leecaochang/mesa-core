@@ -132,7 +132,7 @@ Full MESA implementation including semantic retrieval API, enforcement, and opti
 
 **Requirements:** All Level 1 and Level 2 requirements, plus:
 - MUST implement the following MCP tools defined in Section 9.5: `mesa_query_profiles`, `mesa_get_profile`, `mesa_get_caller_context`, `mesa_explain_profile`.
-- SHOULD implement lease tools (`mesa_request_lease`, `mesa_release_lease`) when the deployment requires multi-agent coordination. Full lease support is expected in a future revision of this specification. A Level 3 server that omits lease tools is conformant but cannot participate in the coordination protocol defined in Section 21 (MESA Enrichment).
+- SHOULD implement lease tools (`mesa_request_lease`, `mesa_release_lease`) when the deployment requires multi-agent coordination. The protocol is defined in Section 21 (MESA Enrichment) and implemented by mesa-core 1.1+; multi-agent priority preemption (Section 21.6) is the one part not yet implemented by the reference implementation. A Level 3 server that omits lease tools is conformant but cannot participate in the coordination protocol.
 - MUST support domain, tag, area, intent, and origin filtering.
 - MUST support pagination.
 - MUST require authentication equivalent to the host platform's API authentication.
