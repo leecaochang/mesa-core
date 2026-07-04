@@ -93,8 +93,9 @@ def test_entity_id_lists_and_plural_keys() -> None:
     assert issues[0].automation_id == "automation.plural_keys"
 
 
-# Named triggers (HA 2026.7+) reference entities through target selectors;
-# device conditions reference them through device_id. Neither names an entity.
+# Purpose-specific triggers (HA 2026.7+) reference entities through target
+# selectors; device conditions reference them through device_id. Neither names
+# an entity directly.
 TARGETED_AUTOMATIONS: list[dict[str, Any]] = [
     {
         "id": "automation.movie_mode",

@@ -88,7 +88,7 @@
           "include_semantic_moments": {
             "type": "boolean",
             "default": false,
-            "description": "Include the HA named triggers/conditions (2026.7+) this entity participates in, when the host exposes them. Context only; carries no MESA authority."
+            "description": "Include the HA purpose-specific triggers/conditions (2026.7+) this entity participates in, when the host exposes them. Context only; carries no MESA authority."
           }
         }
       }

@@ -8,9 +8,9 @@ and unsafe declaration: agents will skip cascade caution for it.
 mesa-core never calls HA: the host provides automation configs through the
 ``get_automation_configs`` callback, from any source (REST API, YAML parse, or
 test fixture). Automations can also reference entities indirectly, through
-device triggers and the target selectors of named triggers (HA 2026.7+);
-resolving those requires the host's ``expand_target`` callback, because only
-the host can query the HA registries.
+device triggers and the target selectors of purpose-specific triggers
+(HA 2026.7+); resolving those requires the host's ``expand_target`` callback,
+because only the host can query the HA registries.
 """
 
 from __future__ import annotations
@@ -31,8 +31,8 @@ _SECTION_KEYS = {
 }
 
 # Selector keys that reference entities indirectly (device triggers/conditions,
-# and the target blocks of named triggers). Only the host can resolve these
-# against the HA registries.
+# and the target blocks of purpose-specific triggers). Only the host can
+# resolve these against the HA registries.
 _TARGET_KEYS = ("area_id", "device_id", "floor_id", "label_id")
 
 

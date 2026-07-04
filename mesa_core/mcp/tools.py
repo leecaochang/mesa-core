@@ -61,7 +61,7 @@ class MesaToolHandlers:
         self.get_semantic_moments = get_semantic_moments
 
     def _semantic_moments(self, entity_id: str) -> list[dict[str, Any]] | None:
-        """Live HA named-trigger vocabulary for one entity (Spec 9.5).
+        """Live HA purpose-specific trigger vocabulary for one entity (Spec 9.5).
 
         Surfaced for agent context only: never stored, never consulted by
         enforcement. Entries without a string ``id`` are dropped; the rest
