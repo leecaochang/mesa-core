@@ -59,6 +59,15 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {
             "entity_id": {"type": "string"},
             "include_diagnostic": {"type": "boolean", "default": True},
+            "include_semantic_moments": {
+                "type": "boolean",
+                "default": False,
+                "description": (
+                    "Include the HA named triggers/conditions (2026.7+) this "
+                    "entity participates in, when the host exposes them. "
+                    "Context only; carries no MESA authority."
+                ),
+            },
         },
     },
     "mesa_explain_profile": {

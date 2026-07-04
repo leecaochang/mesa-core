@@ -52,11 +52,36 @@ class MesaToolHandlers:
         resolver: InheritanceResolver | None = None,
         caller_context_fn: Callable[[], CallerContext] | None = None,
         lease_manager: LeaseManager | None = None,
+        get_semantic_moments: Callable[[str], list[dict[str, Any]] | None] | None = None,
     ) -> None:
         self.store = store
         self.resolver = resolver or InheritanceResolver(store=store)
         self.caller_context_fn = caller_context_fn
         self.lease_manager = lease_manager
+        self.get_semantic_moments = get_semantic_moments
+
+    def _semantic_moments(self, entity_id: str) -> list[dict[str, Any]] | None:
+        """Live HA named-trigger vocabulary for one entity (Spec 9.5).
+
+        Surfaced for agent context only: never stored, never consulted by
+        enforcement. Entries without a string ``id`` are dropped; the rest
+        pass through as the host supplied them. None means the host cannot
+        answer, and the response field is omitted entirely.
+        """
+        if self.get_semantic_moments is None:
+            return None
+        try:
+            moments = self.get_semantic_moments(entity_id)
+        except Exception:
+            logger.exception("get_semantic_moments callback failed")
+            return None
+        if moments is None:
+            return None
+        return [
+            moment
+            for moment in moments
+            if isinstance(moment, dict) and isinstance(moment.get("id"), str)
+        ]
 
     # -- helpers ---------------------------------------------------------------
 
@@ -166,6 +191,10 @@ class MesaToolHandlers:
                 out["diagnostic_profile"] = effective.diagnostic_profile
             if stored is not None and stored.is_inferred():
                 out["staleness_status"] = stored.staleness_status()
+            if bool(params.get("include_semantic_moments", False)):
+                moments = self._semantic_moments(entity_id)
+                if moments is not None:
+                    out["semantic_moments"] = moments
             return out
         except MesaValidationError as err:
             return _error("invalid_query", str(err))
@@ -271,6 +300,7 @@ def register_mesa_tools(
     enforcer: Any = None,
     lease_manager: LeaseManager | None = None,
     caller_context_fn: Callable[[], CallerContext] | None = None,
+    get_semantic_moments: Callable[[str], list[dict[str, Any]] | None] | None = None,
 ) -> ToolRegistry:
     """Register all MESA MCP tools into the host server's tool registry.
 
@@ -306,6 +336,7 @@ def register_mesa_tools(
         resolver=resolver,
         caller_context_fn=caller_context_fn,
         lease_manager=lease_manager,
+        get_semantic_moments=get_semantic_moments,
     )
     tools = [
         ("mesa_query_profiles", handlers.mesa_query_profiles),

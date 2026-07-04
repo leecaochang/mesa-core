@@ -293,6 +293,55 @@ def test_lease_request_missing_params_rejected() -> None:
     assert call(registry, "mesa_release_lease")["error"] == "invalid_query"
 
 
+def _moments_registry(moments: Any) -> DictToolRegistry:
+    store = ProfileStore(backend=MemoryBackend())
+    store.set("light.a", make_profile("light.a"))
+    registry = DictToolRegistry()
+    register_mesa_tools(
+        store,
+        adapter=registry,
+        get_semantic_moments=moments if callable(moments) else lambda eid: moments,
+    )
+    return registry
+
+
+def test_semantic_moments_opt_in_and_normalised() -> None:
+    supplied = [
+        {"id": "light.turned_on", "kind": "trigger", "description": "Light turned on"},
+        {"kind": "trigger"},  # no id: dropped
+        "not-a-dict",  # dropped
+    ]
+    registry = _moments_registry(supplied)
+    # Off by default: no field even though the host could answer.
+    assert "semantic_moments" not in call(registry, "mesa_get_profile", entity_id="light.a")
+    result = call(registry, "mesa_get_profile", entity_id="light.a", include_semantic_moments=True)
+    assert result["semantic_moments"] == [
+        {"id": "light.turned_on", "kind": "trigger", "description": "Light turned on"}
+    ]
+
+
+def test_semantic_moments_omitted_when_host_cannot_answer() -> None:
+    registry, store = make_registry()
+    store.set("light.a", make_profile("light.a"))
+    # No callback registered at all.
+    no_callback = call(registry, "mesa_get_profile", entity_id="light.a", include_semantic_moments=True)
+    assert "semantic_moments" not in no_callback
+
+    # Callback answers None.
+    none_registry = _moments_registry(None)
+    assert "semantic_moments" not in call(
+        none_registry, "mesa_get_profile", entity_id="light.a", include_semantic_moments=True
+    )
+
+    # Callback raises: omitted, not an error envelope.
+    def boom(entity_id: str) -> list[dict[str, Any]]:
+        raise RuntimeError("registry offline")
+
+    raising = _moments_registry(boom)
+    result = call(raising, "mesa_get_profile", entity_id="light.a", include_semantic_moments=True)
+    assert "error" not in result and "semantic_moments" not in result
+
+
 def test_shipped_tools_schema_in_sync() -> None:
     shipped = json.loads(
         (Path(__file__).parent.parent / "mesa_core" / "schemas" / "mesa_tools.schema.json").read_text()
