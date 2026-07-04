@@ -6,9 +6,10 @@ Invariants this module guarantees:
 - Unevaluable conditions are treated as ACTIVE regardless of any ``negate``
   flag (fail-closed): no evaluation failure can grant a permission.
 
-v1 condition types: time_range, day_of_week, calendar_entity (via host
-callback). solar_angle, duration, and relative_to_event are unevaluable in v1
-and therefore fail closed.
+Implemented condition types: time_range, day_of_week, calendar_entity (via
+host callback), and solar_angle (via the ``get_solar_elevation`` host
+callback; mesa-core computes no astronomy itself). duration and
+relative_to_event are unevaluable in 1.x and therefore fail closed.
 """
 
 from __future__ import annotations
@@ -16,12 +17,24 @@ from __future__ import annotations
 import copy
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from typing import Any
 
 from mesa_core.profile import CONTROL_MODE_RANK, ControlMode, OperationalBoundaries
 
 _WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+# solar_event -> (elevation threshold in degrees, sun must be above it).
+# Each event names a boundary crossing; the condition is true while the sun is
+# past that boundary in the event's direction (Spec 6.5).
+_SOLAR_EVENTS: dict[str, tuple[float, bool]] = {
+    "sunrise": (0.0, True),
+    "sunset": (0.0, False),
+    "civil_twilight_start": (-6.0, True),
+    "civil_twilight_end": (-6.0, False),
+    "nautical_twilight_start": (-12.0, True),
+    "nautical_twilight_end": (-12.0, False),
+}
 
 
 @dataclass
@@ -39,9 +52,16 @@ class TemporalEvaluator:
         self,
         get_state: Callable[[str], str | None] | None = None,
         get_calendar_events: Callable[[str], list[Any]] | None = None,
+        get_solar_elevation: Callable[[datetime], float | None] | None = None,
     ) -> None:
+        """``get_solar_elevation`` returns the sun's elevation in degrees at the
+        given time, or None when unknown (fail-closed). In Home Assistant the
+        current elevation is the ``sun.sun`` entity's ``elevation`` attribute;
+        hosts that can compute elevation at arbitrary times (astral ships with
+        HA core) also get exact ``solar_offset_minutes`` handling."""
         self.get_state = get_state
         self.get_calendar_events = get_calendar_events
+        self.get_solar_elevation = get_solar_elevation
 
     # -- condition evaluation ------------------------------------------------
 
@@ -72,6 +92,26 @@ class TemporalEvaluator:
         except Exception:
             return None
 
+    def _eval_solar(self, cond: dict[str, Any], now: datetime) -> bool | None:
+        event = cond.get("solar_event")
+        boundary = _SOLAR_EVENTS.get(str(event)) if event is not None else None
+        if boundary is None or self.get_solar_elevation is None:
+            return None
+        # A positive offset delays the transition: "30 minutes after sunset" is
+        # true iff the sun was already below the boundary 30 minutes ago.
+        try:
+            at = now - timedelta(minutes=float(cond.get("solar_offset_minutes", 0)))
+        except (TypeError, ValueError):
+            return None
+        try:
+            elevation = self.get_solar_elevation(at)
+        except Exception:
+            return None
+        if elevation is None:
+            return None
+        threshold, above = boundary
+        return elevation > threshold if above else elevation < threshold
+
     def evaluate_condition(self, cond: dict[str, Any], now: datetime) -> bool | None:
         """Returns True/False, or None when the condition cannot be evaluated."""
         cond_type = cond.get("type")
@@ -81,8 +121,10 @@ class TemporalEvaluator:
             result = self._eval_day_of_week(cond, now)
         elif cond_type == "calendar_entity":
             result = self._eval_calendar(cond)
+        elif cond_type == "solar_angle":
+            result = self._eval_solar(cond, now)
         else:
-            result = None  # solar_angle / duration / relative_to_event are v2
+            result = None  # duration / relative_to_event are unevaluable in 1.x
         if result is None:
             return None
         if cond.get("negate") is True:

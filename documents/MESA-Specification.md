@@ -677,7 +677,7 @@ Temporal constraints allow boundary rules to be conditioned on time, day, or cal
 | `time_range` | `start_time`, `end_time` | HH:MM 24-hour. Midnight-crossing supported. |
 | `day_of_week` | `days` | Array of: `mon`, `tue`, `wed`, `thu`, `fri`, `sat`, `sun`. |
 | `calendar_entity` | `calendar_entity` | HA calendar entity ID. True when calendar has active event. |
-| `solar_angle` | `solar_event` | `sunrise`, `sunset`, `civil_twilight_start`, `civil_twilight_end`, `nautical_twilight_start`, `nautical_twilight_end`. Optional `solar_offset_minutes`. |
+| `solar_angle` | `solar_event` | `sunrise`, `sunset`, `civil_twilight_start`, `civil_twilight_end`, `nautical_twilight_start`, `nautical_twilight_end`. Optional `solar_offset_minutes`. True while the sun is past the named boundary in that event's direction: after `sunrise` the sun is up, after `sunset` it is down; the twilight starts/ends are the civil (-6 degree) and nautical (-12 degree) elevation crossings. A positive `solar_offset_minutes` delays the transition, a negative one advances it. |
 | `duration` | `duration_seconds` | True for this many seconds after the triggering condition. Supports "wait N minutes after event" patterns. |
 | `relative_to_event` | `anchor_event`, `offset_seconds` | True from `offset_seconds` after `anchor_event`. Supports presence-departure patterns. |
 

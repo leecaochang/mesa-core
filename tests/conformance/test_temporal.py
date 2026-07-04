@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from mesa_core.profile import ControlMode, OperationalBoundaries
@@ -178,3 +178,89 @@ def test_inactive_constraints_do_not_modify_boundaries() -> None:
     assert result.boundaries.control_mode == ControlMode.CONFIRM
     assert result.active_constraint_ids == []
     assert b.control_mode == ControlMode.CONFIRM  # original untouched
+
+
+# ---------------------------------------------------------------- solar_angle
+
+
+def solar_constraint(
+    event: str, offset: float | None = None, negate: bool = False
+) -> dict[str, Any]:
+    condition: dict[str, Any] = {"type": "solar_angle", "solar_event": event}
+    if offset is not None:
+        condition["solar_offset_minutes"] = offset
+    if negate:
+        condition["negate"] = True
+    return {"id": "solar", "condition": condition, "effect": {"control_mode": "prohibited"}}
+
+
+def solar_evaluator(elevation: float) -> TemporalEvaluator:
+    return TemporalEvaluator(get_solar_elevation=lambda at: elevation)
+
+
+def test_solar_boundaries_map_to_elevations() -> None:
+    cases = [
+        ("sunset", -1.0, True),
+        ("sunset", 5.0, False),
+        ("sunrise", 5.0, True),
+        ("sunrise", -1.0, False),
+        ("civil_twilight_end", -7.0, True),
+        ("civil_twilight_end", -5.0, False),
+        ("civil_twilight_start", -5.0, True),
+        ("nautical_twilight_end", -13.0, True),
+        ("nautical_twilight_end", -11.0, False),
+        ("nautical_twilight_start", -11.0, True),
+    ]
+    for event, elevation, expected in cases:
+        ev = solar_evaluator(elevation)
+        result = ev.evaluate_condition({"type": "solar_angle", "solar_event": event}, SATURDAY_NOON)
+        assert result is expected, f"{event} at {elevation}"
+
+
+def test_solar_negate_inverts() -> None:
+    ev = solar_evaluator(-1.0)  # after sunset
+    b = boundaries(solar_constraint("sunset", negate=True))
+    assert ev.apply(b, SATURDAY_LATE).boundaries.control_mode == ControlMode.CONFIRM
+
+
+def test_solar_offset_samples_elevation_in_the_past() -> None:
+    sunset = datetime(2026, 6, 13, 20, 0)
+
+    def elevation_at(at: datetime) -> float:
+        # Sun descends 0.2 degrees per minute, crossing zero at 20:00.
+        return -(at - sunset).total_seconds() / 60 * 0.2
+
+    ev = TemporalEvaluator(get_solar_elevation=elevation_at)
+    condition = {"type": "solar_angle", "solar_event": "sunset", "solar_offset_minutes": 30}
+    # 15 minutes after sunset: the shifted boundary (sunset+30) is not reached.
+    assert ev.evaluate_condition(condition, sunset + timedelta(minutes=15)) is False
+    # 45 minutes after sunset: past the shifted boundary.
+    assert ev.evaluate_condition(condition, sunset + timedelta(minutes=45)) is True
+    # Negative offset advances the transition: active before sunset itself.
+    early = {"type": "solar_angle", "solar_event": "sunset", "solar_offset_minutes": -30}
+    assert ev.evaluate_condition(early, sunset - timedelta(minutes=15)) is True
+
+
+def test_solar_fails_closed_without_callback_or_data() -> None:
+    b = boundaries(solar_constraint("sunset"))
+    # No callback at all.
+    no_callback = TemporalEvaluator().apply(b, SATURDAY_LATE)
+    assert no_callback.boundaries.control_mode == ControlMode.PROHIBITED
+    assert any("fail-closed" in w for w in no_callback.warnings)
+    # Callback cannot answer.
+    unknown = TemporalEvaluator(get_solar_elevation=lambda at: None).apply(b, SATURDAY_LATE)
+    assert unknown.boundaries.control_mode == ControlMode.PROHIBITED
+    # Unknown solar_event value.
+    bad = solar_evaluator(-1.0).apply(boundaries(solar_constraint("noon")), SATURDAY_LATE)
+    assert bad.boundaries.control_mode == ControlMode.PROHIBITED
+
+
+def test_enforcer_passes_solar_callback_through() -> None:
+    from mesa_core import MesaEnforcer, ProfileStore
+    from mesa_core.backends import MemoryBackend
+
+    enforcer = MesaEnforcer(
+        ProfileStore(backend=MemoryBackend()), get_solar_elevation=lambda at: -3.0
+    )
+    assert enforcer.temporal.get_solar_elevation is not None
+    assert enforcer.temporal.get_solar_elevation(SATURDAY_NOON) == -3.0

@@ -70,7 +70,7 @@ mesa-core provides five capabilities that any MCP server can use independently o
 ## 2. Architecture Overview
 
 ```
-Host MCP Server (ha-mcp, ATM, or any other)
+Host MCP Server (any MCP server integrating mesa-core)
     |
     imports mesa-core
     |
@@ -573,8 +573,9 @@ Evaluates temporal constraints against the current time and HA state. Returns wh
 from mesa_core.temporal import TemporalEvaluator
 
 evaluator = TemporalEvaluator(
-    get_state=lambda entity_id: "on",   # callback: get current HA entity state
-    get_calendar_events=lambda cal_id: []  # callback: get active calendar events
+    get_state=lambda entity_id: "on",       # callback: get current HA entity state
+    get_calendar_events=lambda cal_id: [],  # callback: get active calendar events
+    get_solar_elevation=lambda at: -4.2,    # callback: sun elevation in degrees at `at`
 )
 
 # Returns modified OperationalBoundaries after applying active constraints
@@ -584,7 +585,9 @@ modified_boundaries = evaluator.apply(
 )
 ```
 
-**Condition types implemented in v1:** `time_range`, `day_of_week`, `calendar_entity`. All condition types support the `negate` flag. Solar angle and relative-to-event are v2.
+**Condition types implemented:** `time_range`, `day_of_week`, `calendar_entity`, and (since 1.2) `solar_angle`. All condition types support the `negate` flag. `duration` and `relative_to_event` are v2 and fail closed.
+
+**Solar evaluation.** mesa-core computes no astronomy. `get_solar_elevation(at)` returns the sun's elevation in degrees at the given time, or None (fail-closed). In Home Assistant the current elevation is the `sun.sun` entity's `elevation` attribute; hosts that can compute elevation at arbitrary times (the `astral` library ships with HA core) also get exact `solar_offset_minutes` handling, because a condition offset by N minutes samples the elevation N minutes in the past.
 
 ### 4.8 TriggerValidator
 
@@ -1001,7 +1004,8 @@ mesa-core never talks to Home Assistant. Every piece of HA registry or state kno
 | `get_entity_area` | `ProfileStore` / `InheritanceResolver` | Area-level inheritance is skipped; `query(areas=...)` raises `ValueError`. |
 | `get_entity_integration` | `InheritanceResolver` | Integration sidecar profiles resolve only where the integration name equals the entity's HA domain; hub and device integration profiles stay inert (Specification 5.6). |
 | `get_state` | `MesaEnforcer`, `LeaseManager` (accepted by `TemporalEvaluator` for future entity-state condition types; unused there in 1.x) | Declared-limit predicates are treated as active (fail-closed), so limits may block unexpectedly; protected automations deny leases unconditionally. |
-| `get_calendar_events` | `TemporalEvaluator` | `calendar_entity` conditions are unevaluable and treated as active (fail-closed). Note `solar_angle`, `duration`, and `relative_to_event` conditions validate but are unevaluable in 1.x regardless, and also fail closed. |
+| `get_calendar_events` | `TemporalEvaluator` | `calendar_entity` conditions are unevaluable and treated as active (fail-closed). Note `duration` and `relative_to_event` conditions validate but are unevaluable in 1.x regardless, and also fail closed. |
+| `get_solar_elevation` | `TemporalEvaluator` (via `MesaEnforcer`) | `solar_angle` conditions are unevaluable and treated as active (fail-closed). |
 | `get_automation_configs` | `TriggerValidator` (per call) | No automation cross-reference is possible. |
 | `expand_target` | `TriggerValidator`, `entities_by_role` | Indirect references (device triggers, named-trigger target selectors) are invisible; a stale `none` declaration behind them passes unflagged. |
 | `caller_context_fn` | `register_mesa_tools` | Tools respond as an anonymous, role-less caller; lease session scoping degrades. |
@@ -1106,11 +1110,11 @@ mesa-core 1.x implements the MESA Specification at Levels 1 and 2 in full and at
 
 **Profile export and import.** `export_profiles()` / `import_profiles()` and their async variants: the portable archive format for moving complete profile sets between deployments, backends, and host servers. Faithful export, validated import, explicit conflict policy. See Section 4.12. The `mesa-lint` CLI also shipped in this cycle as a separate package (https://github.com/sfox38/mesa-lint).
 
+**Solar-angle temporal conditions.** The `solar_angle` condition type evaluates through the `get_solar_elevation` host callback: each `solar_event` is an elevation-boundary crossing, and `solar_offset_minutes` shifts the transition by sampling the elevation in the past. No astronomy dependency; without the callback the condition stays fail-closed as in 1.1. See Section 4.7.
+
 ### Deferred to Version 2
 
-**Temporal evaluator: solar angle conditions.** Requires a solar calculation library. Deferred to avoid adding a dependency.
-
-**Temporal evaluator: relative_to_event conditions.** Requires HA event bus integration. Architecture is defined; implementation deferred.
+**Temporal evaluator: relative_to_event and duration conditions.** Require HA event bus integration. Architecture is defined; implementation deferred.
 
 **Multi-agent lease collision resolution.** `caller_priority` field, role-to-priority mapping, preemption notification. Deferred until multiple agents in a single deployment is a common real-world scenario.
 
@@ -1125,7 +1129,7 @@ mesa-core 1.x implements the MESA Specification at Levels 1 and 2 in full and at
 
 ## 9. Future Versions
 
-**Version 1.2 (in progress).** Solar angle temporal conditions. Semantic-moment consumption of HA named triggers (2026.7+) via host callbacks, if integrator demand appears.
+**Version 1.2 (in progress).** Semantic-moment consumption of HA named triggers (2026.7+) via host callbacks, if integrator demand appears.
 
 **Version 2.0.** Multi-agent lease collision resolution. Snapshot management for reversible automations. `binary_sensor.mesa_lease_active` entity support. Additional framework adapters (Node.js MCP SDK if demand exists).
 

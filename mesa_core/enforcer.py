@@ -165,6 +165,7 @@ class MesaEnforcer:
         privacy_enforcer: PrivacyEnforcer | None = None,
         get_state: Callable[[str], str | None] | None = None,
         get_calendar_events: Callable[[str], list[Any]] | None = None,
+        get_solar_elevation: Callable[[datetime], float | None] | None = None,
         challenge_ttl_seconds: int = CHALLENGE_TTL_SECONDS,
     ) -> None:
         self.store = store
@@ -174,7 +175,9 @@ class MesaEnforcer:
         self.privacy = privacy_enforcer or PrivacyEnforcer()
         self.get_state = get_state
         self.temporal = TemporalEvaluator(
-            get_state=get_state, get_calendar_events=get_calendar_events
+            get_state=get_state,
+            get_calendar_events=get_calendar_events,
+            get_solar_elevation=get_solar_elevation,
         )
         self.confirmations = ConfirmationManager(ttl_seconds=challenge_ttl_seconds)
 
