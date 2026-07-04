@@ -51,6 +51,22 @@ Documentation = "https://github.com/sfox38/mesa-core/tree/main/documents"
 [tool.hatch.build.targets.wheel]
 packages = ["mesa_core"]
 
+[tool.hatch.build.targets.sdist]
+# Allowlist, not a blacklist: only these paths can ever ship, regardless of
+# what untracked local files (editor state, notes, caches) exist on disk.
+only-include = [
+    "mesa_core",
+    "tests",
+    "documents",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "pyproject.toml",
+]
+# hatchling force-includes a couple of conventional root dotfiles even under
+# only-include; trim explicitly rather than accept them implicitly.
+exclude = [".gitignore"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
