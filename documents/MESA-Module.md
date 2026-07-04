@@ -34,6 +34,7 @@ This document describes what mesa-core does, how it is structured, how MCP serve
    - 4.9 [PrivacyEnforcer](#49-privacyenforcer)
    - 4.10 [LeaseManager](#410-leasemanager)
    - 4.11 [Audit Events](#411-audit-events)
+   - 4.12 [Profile Export and Import](#412-profile-export-and-import)
 5. [MCP Tool Registration](#5-mcp-tool-registration)
    - 5.1 [register_mesa_tools()](#51-register_mesa_tools)
    - 5.2 [Tool Implementations](#52-tool-implementations)
@@ -776,6 +777,28 @@ class MesaAuditEvent:
 
 The standard schema is the RECOMMENDED shape for host implementations; the Specification requires the logging itself, not this exact structure (Specification 7.1).
 
+### 4.12 Profile Export and Import
+
+Shipped in mesa-core 1.2. Moves complete profile sets between deployments, backends, and host servers as a single JSON archive: backup and restore, JsonFile-to-SQLite migration, cloning a test deployment to production, or an Export button in one MCP server feeding an Import button in another.
+
+```python
+from mesa_core import export_profiles, import_profiles
+
+archive = export_profiles(store)            # one JSON-serialisable dict
+result = import_profiles(other_store, archive, on_conflict="skip")
+# result: imported, overwritten, skipped_existing, invalid (key -> error), ok
+```
+
+The archive envelope (`mesa_export`) carries `format_version`, `exported_at`, `mesa_core_version`, and the profile documents grouped by scope: `entities`, `domains`, `integrations`, `areas`, plus `deployment_defaults`. The documents are the canonical profile JSON form, so the archive is storage-backend-agnostic by construction: any host that exposes its profiles through the ProfileStore API can exchange archives with any other, regardless of how either stores profiles internally.
+
+**Design properties:**
+
+- **Export is faithful.** It reads raw stored documents through the backend with no validation and drops nothing; a backup is a backup, malformed entries included.
+- **Import validates.** Every document passes profile validation before writing; failures are quarantined in `ImportResult.invalid` and never written, so a corrupted or hostile archive cannot silently poison a store.
+- **Conflicts are explicit.** `on_conflict="skip"` (default) preserves existing profiles, `"overwrite"` replaces them, and `"error"` raises before anything is written (all-or-nothing).
+
+Async variants: `aexport_profiles()`, `aimport_profiles()`.
+
 ---
 
 ## 5. MCP Tool Registration
@@ -1079,6 +1102,10 @@ mesa-core 1.x implements the MESA Specification at Levels 1 and 2 in full and at
 
 **Audit event schema.** The standardised `mesa_audit_event` structure for access to sensitive/restricted entities, enforcement decisions, and lease/coordination events, emitted by `PrivacyEnforcer`, `MesaEnforcer`, and `LeaseManager` on the `mesa_core.audit` logger. Fields: `timestamp`, `caller_id`, `roles`, `entity_id`, `action`, `decision`, `profile_version`, `rule_applied`, `redaction_mode`, plus `event_type` and an extensible `details` object. See Section 4.11.
 
+### Added in Version 1.2
+
+**Profile export and import.** `export_profiles()` / `import_profiles()` and their async variants: the portable archive format for moving complete profile sets between deployments, backends, and host servers. Faithful export, validated import, explicit conflict policy. See Section 4.12. The `mesa-lint` CLI also shipped in this cycle as a separate package (https://github.com/sfox38/mesa-lint).
+
 ### Deferred to Version 2
 
 **Temporal evaluator: solar angle conditions.** Requires a solar calculation library. Deferred to avoid adding a dependency.
@@ -1098,7 +1125,7 @@ mesa-core 1.x implements the MESA Specification at Levels 1 and 2 in full and at
 
 ## 9. Future Versions
 
-**Version 1.2.** `mesa-lint` CLI tool as a separate package. Solar angle temporal conditions. Profile export and import utilities. Semantic-moment consumption of HA named triggers (2026.7+) via host callbacks, if integrator demand appears.
+**Version 1.2 (in progress).** Solar angle temporal conditions. Semantic-moment consumption of HA named triggers (2026.7+) via host callbacks, if integrator demand appears.
 
 **Version 2.0.** Multi-agent lease collision resolution. Snapshot management for reversible automations. `binary_sensor.mesa_lease_active` entity support. Additional framework adapters (Node.js MCP SDK if demand exists).
 

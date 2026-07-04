@@ -14,6 +14,13 @@ from mesa_core.inheritance import InheritanceResolver, ProfileExplanation
 from mesa_core.integration_import import import_from_integration
 from mesa_core.lease import Lease, LeaseManager, LeaseResponse
 from mesa_core.migration import migrate_profile
+from mesa_core.portability import (
+    ImportResult,
+    aexport_profiles,
+    aimport_profiles,
+    export_profiles,
+    import_profiles,
+)
 from mesa_core.privacy import AccessDecision, CallerContext, PrivacyEnforcer
 from mesa_core.profile import (
     DOMAIN_SAFETY_BASELINE,
@@ -49,6 +56,7 @@ __all__ = [
     "ControlMode",
     "DeploymentDefaults",
     "EnforcementResult",
+    "ImportResult",
     "InheritanceResolver",
     "InvalidCursorError",
     "Lease",
@@ -78,9 +86,13 @@ __all__ = [
     "TriggersAutomations",
     "ValidationIssue",
     "ValidationReport",
+    "aexport_profiles",
+    "aimport_profiles",
     "emit_audit_event",
     "entities_by_role",
+    "export_profiles",
     "import_from_integration",
+    "import_profiles",
     "migrate_profile",
     "validate_document",
     "validate_or_raise",
