@@ -57,7 +57,11 @@ packages = ["mesa_core"]
 only-include = [
     "mesa_core",
     "tests",
-    "documents",
+    "documents/MESA-Overview.md",
+    "documents/MESA-Specification.md",
+    "documents/MESA-Enrichment.md",
+    "documents/MESA-Getting-Started.md",
+    "documents/MESA-Module.md",
     "README.md",
     "CHANGELOG.md",
     "LICENSE",
