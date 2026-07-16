@@ -146,7 +146,7 @@ MESA is not a complete smart home ontology. It is a practical, incrementally ado
 
 **Today.** Add the seven kernel fields to your integration or entity. Zero dependencies. Zero coordination required.
 
-**When mesa-core is integrated into your MCP server.** Start using the retrieval API so agents can query only the context relevant to a given task, rather than receiving full state dumps. Context window consumption drops significantly. Any MCP server can add this capability by integrating the mesa-core module.
+**When mesa-core is integrated into your MCP server.** Start using the retrieval API so agents can query only the context relevant to a given task, rather than receiving full state dumps. This is expected to reduce context window consumption, by how much is deployment-specific and has not yet been measured. Any MCP server can add this capability by integrating the mesa-core module.
 
 **As the ecosystem matures.** Multi-agent coordination, spatial graph reasoning, and real-time conflict detection become possible as more of the deployment is profiled.
 

@@ -238,7 +238,7 @@ class ProfileMetadata:
     source: MetadataOrigin = MetadataOrigin.UNKNOWN
     confidence: Optional[float] = None
     generated_at: Optional[str] = None
-    staleness_window_days: int = 60
+    staleness_window_days: float = 60  # number per Spec 5.4; int or float preserved
     confirmed_fields: List[str] = field(default_factory=list)
     last_updated: Optional[str] = None
     profile_valid_for: Optional[Dict[str, Any]] = None
@@ -485,7 +485,7 @@ store.set_deployment_defaults(DeploymentDefaults(
 ))
 ```
 
-This default applies **only as a fallback**: it fills `control_mode` solely when no profile at any level (entity, area, integration, or domain) declares it. It does not participate in the Rule A most-restrictive comparison, so an entity (or any of its scope levels) that declares `autonomous` stays `autonomous`; a restrictive default never dominates a declared value. Two practical notes for fail-closed operators:
+This default applies **only to unprofiled entities**: it fills `control_mode` solely for an entity that has no profile at any level (entity, area, integration, or domain), matching Specification 5.8 and the control_mode precedence note in Section 4 (operators loosen an unprofiled entity via `deployment_defaults`, a profiled one via the Section 5.7 Rule A override). A profiled entity that simply omits `control_mode` defaults to `confirm`, never to the deployment default, so the default can never loosen a profiled entity below `confirm`. It does not participate in the Rule A most-restrictive comparison either, so a declared `autonomous` stays `autonomous`. Two practical notes for fail-closed operators:
 
 - `prohibited` hard-blocks only when the call is evaluated in enforced mode; in advisory mode it passes with a warning. Pair a `prohibited` default with enforced evaluation. (`read_only` blocks regardless of enforcement mode, but it asserts entity nature rather than policy, so `prohibited` is the better fit for "not yet granted.")
 - `control_mode` gates control (writes/service calls) only; it never gates reads. mesa-core has no blanket read-deny default, and privacy denial is role-based (`access_roles.deny_for`), not a configurable default. Read/visibility fail-closed remains the host's responsibility.
@@ -562,7 +562,7 @@ merged = resolver.merge(higher_authority_profile, lower_authority_profile)
 - **Rule A:** `control_mode` tightening-only. `prohibited` > `confirm` > `autonomous` regardless of authority. Sole exception: an entity-level `user`-origin profile may loosen an inherited `confirm` to `autonomous` via `override_control_mode: true` with `control_reason`. `prohibited` and `read_only` never loosen.
 - **Rule B:** `triggers_automations: likely` sticky upward. `deployment_defined` at entity scope overrides.
 - **Rule C:** Privacy level most-restrictive-wins. `restricted` > `sensitive` > `normal` > `public`.
-- **Rule D:** Scope-then-origin for all other fields. Most specific scope wins (`entity` > `area` > `integration` > `domain`) among trusted origins (`developer`, `user`, `hybrid`); origin breaks scope ties. `inferred_ai` and `unknown` never override trusted-tier declarations at any scope; among themselves the same scope-then-origin rule applies, with `inferred_ai` > `unknown`.
+- **Rule D:** Scope-then-origin for all other fields. Most specific scope wins (`entity` > `area` > `integration` > `domain`) among trusted origins (`developer`, `user`, `hybrid`); origin breaks scope ties. Hybrid trust is per field: a `hybrid` profile is trusted-tier only for the field paths in its `confirmed_fields`; its unconfirmed fields resolve in the lower tier as inferred (Rule 6). `inferred_ai` and `unknown`, and unconfirmed hybrid fields, never override trusted-tier declarations at any scope; among themselves the same scope-then-origin rule applies, with `inferred_ai` > `unknown`.
 - **Rule E:** Absence is not a conflict. Missing fields are inherited, not defaulted.
 
 ### 4.7 TemporalEvaluator
@@ -906,12 +906,12 @@ Full Level 3 integration with enforcement, leases, and caller context.
 from mesa_core import ProfileStore, MesaEnforcer
 from mesa_core.backends import SqliteBackend
 from mesa_core.inheritance import InheritanceResolver
-from mesa_core.privacy import PrivacyEnforcer
 from mesa_core.lease import LeaseManager  # mesa-core 1.1+
 from mesa_core.mcp import register_mesa_tools
 from mesa_core.exceptions import MesaEnforcementError
+from mesa_core.privacy import CallerContext
 from mcp.server.fastmcp import FastMCP
-import httpx
+from typing import Optional
 from datetime import datetime
 
 app = FastMCP("my-ha-mcp-server")
@@ -919,13 +919,18 @@ app = FastMCP("my-ha-mcp-server")
 # Initialise storage
 store = ProfileStore(backend=SqliteBackend("/config/mesa/mesa.db"))
 
-# Initialise resolver with HA lookup callbacks
-# These callbacks let mesa-core query HA for area and domain information
-async def get_entity_area(entity_id: str) -> Optional[str]:
-    # Call HA REST API to get entity's area
+# Initialise resolver with HA lookup callbacks. These callbacks let mesa-core
+# query HA for area and domain information. They are called synchronously, from
+# inside a worker thread on the async paths, so they must not be coroutines: a
+# coroutine object is not None, so an `async def` callback here would be used as
+# the lookup result itself and silently skip the area, integration, and domain
+# inheritance levels rather than raising. Cache the registry, or bridge with
+# asyncio.run_coroutine_threadsafe against your server's loop.
+def get_entity_area(entity_id: str) -> Optional[str]:
+    # Look the entity up in your cached copy of the HA area registry
     ...
 
-async def get_entity_domain(entity_id: str) -> str:
+def get_entity_domain(entity_id: str) -> str:
     return entity_id.split(".")[0]
 
 resolver = InheritanceResolver(
@@ -937,10 +942,14 @@ resolver = InheritanceResolver(
 # Initialise enforcer
 enforcer = MesaEnforcer(store=store, resolver=resolver)
 
-# Initialise lease manager
-lease_manager = LeaseManager()
+# Initialise lease manager. Pass the store: without it there are no automation
+# profiles to read, so the protected/critical denial check (Spec 21.5) silently
+# grants leases it should deny.
+lease_manager = LeaseManager(store)
 
-# Caller context function (host server provides this)
+# Caller context function (host server provides this). mesa-core applies
+# access_roles before surfacing any profile, so without this the base privacy
+# level applies to every caller equally (Spec 7.2).
 def get_caller_context() -> CallerContext:
     # Extract from current MCP session
     ...
@@ -976,7 +985,7 @@ async def call_ha_service(domain: str, service: str, entity_id: str, **kwargs):
 
 mesa-core provides adapters for the two most common MCP Python frameworks.
 
-**FastMCP adapter.** Used when the host server uses the FastMCP framework. `register_mesa_tools()` with `adapter="fastmcp"` registers tools as FastMCP tool functions with proper type annotations.
+**FastMCP adapter.** Used when the host server uses the FastMCP framework. `register_mesa_tools()` with `adapter="fastmcp"` registers tools as FastMCP tool functions. FastMCP derives a tool's published `inputSchema` by introspecting the registered function, so the adapter builds each function's signature from that tool's declared schema (Section 9): the schema a client is shown and the schema the server enforces are the same artifact, and the input shapes documented in Specification 9.5 are what the tools accept.
 
 **Raw MCP Python SDK adapter.** Used when the host server uses the raw `mcp` Python SDK. `register_mesa_tools()` with `adapter="raw_sdk"` registers tools as raw MCP tool handlers.
 
@@ -1124,8 +1133,6 @@ mesa-core 1.x implements the MESA Specification at Levels 1 and 2 in full and at
 **Snapshot management for `snapshot_restorable` automations.** Requires integration with HA state history. Architecture is defined; implementation deferred.
 
 **`binary_sensor.mesa_lease_active` HA entity.** Requires the host server to write to HA's entity registry. Implementation deferred to allow host servers to implement it natively.
-
-**Profile linting CLI (`mesa-lint`).** Planned as a separate package `mesa-lint` that imports `mesa-core` for validation. Deferred to allow mesa-core to stabilise first.
 
 
 ---

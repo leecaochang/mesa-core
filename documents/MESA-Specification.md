@@ -1,5 +1,5 @@
 # MESA Specification
-**Version:** 1.0
+**Version:** 1.0.1
 **Document Type:** Formal Schema Reference
 
 ---
@@ -285,7 +285,7 @@ Provenance determines how much epistemic weight an agent assigns to a profile.
 | `confidence` | `number` | REQUIRED for `inferred_ai` | 0.0 to 1.0. Base confidence at time of inference. |
 | `generated_at` | `string` | REQUIRED for `inferred_ai` | ISO 8601 timestamp of inference. |
 | `staleness_window_days` | `number` | OPTIONAL | Days before profile is flagged for review. Default: 60. |
-| `confirmed_fields` | `array<string>` | REQUIRED for `hybrid` | Field paths confirmed by a human. |
+| `confirmed_fields` | `array<string>` | REQUIRED for `hybrid` | Field paths confirmed by a human (dot-notation; see Section 5.7, Field paths). Confirming a path confirms the whole value declared at it. |
 
 **Origin classes (highest to lowest authority):**
 
@@ -427,7 +427,9 @@ If any profile at any level declares `triggers_automations: likely` for an entit
 When multiple profiles declare `privacy_classification.level` for the same entity, the most restrictive level applies. `restricted` beats `sensitive` beats `normal` beats `public` regardless of origin authority.
 
 **Rule D: Scope precedence with origin tiebreak for all other fields.**
-For all fields not covered by Rules A, B, or C, resolution proceeds in two tiers. Within the trusted tier (`developer`, `user`, `hybrid`), the most specific scope wins: `entity` > `area` > `integration` > `domain`. Where scope is equal, origin authority decides: `developer` > `user` > `hybrid`. Profiles of `inferred_ai` or `unknown` origin form a lower tier: they never override a field explicitly declared by any trusted-tier profile at any scope, consistent with Rule 7 (Section 5.4). When a field is declared only in the lower tier, the same scope-then-origin rule applies within it (`inferred_ai` > `unknown`). This preserves operator sovereignty (an operator's entity-level declaration beats a developer's domain-level default) while ensuring inferred and unattributed profiles can fill gaps but never displace explicit human or developer declarations.
+For all fields not covered by Rules A, B, or C, resolution proceeds in two tiers. Within the trusted tier (`developer`, `user`, `hybrid`), the most specific scope wins: `entity` > `area` > `integration` > `domain`. Where scope is equal, origin authority decides: `developer` > `user` > `hybrid`. A `hybrid` profile is trusted **per field**, not wholesale: a field is trusted-tier only when that specific field path appears in the profile's `confirmed_fields`. An unconfirmed field of a `hybrid` profile remains inferred (Rule 6, Section 5.4) and is resolved in the lower tier, exactly as an `inferred_ai` field would be. Profiles of `inferred_ai` or `unknown` origin form a lower tier: they never override a field explicitly declared by any trusted-tier profile at any scope, consistent with Rule 7 (Section 5.4). When a field is declared only in the lower tier, the same scope-then-origin rule applies within it (`inferred_ai` > `unknown`). This preserves operator sovereignty (an operator's entity-level declaration beats a developer's domain-level default) while ensuring inferred and unattributed profiles can fill gaps but never displace explicit human or developer declarations.
+
+**Field paths.** Everywhere this specification names a field path (`confirmed_fields`, the explanation `field_path`, and the per-field trust of this rule), the grammar is dot-notation: a path is a sequence of property names joined by `.`, and each `.` is a segment separator. A path therefore covers the whole value declared at it: confirming `x_vendor.a` confirms everything beneath `x_vendor.a`, including an object value and all of its descendants. A property name that itself contains a `.` (or a `\`) is not path-addressable: a `confirmed_fields` entry always parses as nested segments and can never name such a property, so it receives no field-level trust of its own (it is still covered by a confirmed ancestor, and profiles of `developer` or `user` origin are unaffected, since their trust does not derive from paths). Implementations MUST NOT let a confirmation intended for a nested path also match a literal property name that renders identically; when reporting such a property in an explanation, implementations SHOULD render the `.` escaped (`a\.b`) so the reported path stays unambiguous.
 
 **Rule D, array-valued safety fields.** `declared_limits` and `temporal_constraints` are the exception to the replacement behaviour above: they are unioned across inheritance levels, not replaced. Each entry is an independent constraint identified by its `id`, and conforming consumers apply every entry, so the union is tightest-wins at evaluation time. The effective array is the union of all entries declared at every level. When the same `id` is declared at more than one level, that single entry is resolved by the standard Rule D precedence (trusted tier first, then most specific scope, then origin authority): a lower-tier entry MUST NOT displace a trusted entry with the same `id`, and a trusted profile at a more specific scope MAY deliberately override one inherited entry by reusing its `id`. Because entries only ever tighten, a more specific profile cannot silently drop an inherited safety limit by declaring an unrelated one. Removing an inherited entry therefore requires overriding it by `id`; there is no wholesale array replacement.
 
@@ -1061,7 +1063,7 @@ When `include_semantic_moments` is true and the host exposes the mapping, the re
 ```json
 {
   "entity_id": "string",
-  "show_conflicts": "boolean (default true - highlight fields where multiple levels declared values)"
+  "show_conflicts": "boolean (default true - highlight fields where multiple levels declared differing values)"
 }
 ```
 
@@ -1072,7 +1074,7 @@ When `include_semantic_moments` is true and the host exposes the mapping, the re
 | `entity_id` | `string` | Yes | The queried entity ID. |
 | `effective_profile` | `object` | Yes | The fully resolved profile as an agent would see it. |
 | `explanation` | `array<object>` | Yes | Per-field resolution entries. See table below. |
-| `conflicts_detected` | `boolean` | Yes | Whether any field had competing declarations across levels. |
+| `conflicts_detected` | `boolean` | Yes | Whether any field had competing (differing) declarations across levels. |
 
 **Explanation entry schema:**
 
@@ -1082,7 +1084,7 @@ When `include_semantic_moments` is true and the host exposes the mapping, the re
 | `effective_value` | `any` | Yes | The resolved value after inheritance and conflict resolution. |
 | `provided_by_level` | `enum` | Yes | The profile level that contributed this value: `entity`, `area`, `integration`, `domain`, `deployment_default`, or `built_in_baseline`. |
 | `provided_by_origin` | `enum` | Yes | The origin authority of the contributing profile: `developer`, `user`, `hybrid`, `inferred_ai`, or `unknown`. |
-| `conflict` | `boolean` | Yes | Whether multiple levels declared values for this field. |
+| `conflict` | `boolean` | Yes | Whether multiple levels declared differing values for this field. Identical declarations at several levels agree and are not a conflict. |
 | `conflict_resolution` | `string` | No | Present when `conflict` is true. Human-readable description of which rule resolved the conflict (e.g. "Rule A: tightening applied - area declared confirm over domain autonomous"). |
 | `competing_values` | `array<object>` | No | Present when `conflict` is true and `show_conflicts` was requested. Each entry: `level`, `origin`, `value`. |
 
@@ -1291,4 +1293,14 @@ Conformance levels are declared by host implementations (Section 2). Table B.1 l
 
 ---
 
-*MESA - Metadata and Environment Semantics for Agents. Version 1.0. Core specification. See also: MESA Overview, MESA Enrichment, MESA Getting Started Guide, and mesa-core Module Proposal. Discussion and contributions are welcome via GitHub Issues.*
+## Errata
+
+**v1.0.1.** Section 5.7 Rule D described the trusted tier as `developer`, `user`, and `hybrid` without stating how it applies to a `hybrid` profile's unconfirmed fields, which conflicted with Section 5.4 Rule 6 ("unconfirmed fields remain inferred"). Rule D now states explicitly that a `hybrid` profile is trusted per field, only for the paths in its `confirmed_fields`, and that its unconfirmed fields resolve in the lower (inferred) tier. This is a clarification in the safe direction: an implementation that read Rule D as making every `hybrid` field trusted would have let an unconfirmed hybrid value, including a privacy `access_roles` field, override or relax a trusted declaration, which Rule 6 already forbids. Implementations SHOULD confirm they resolve unconfirmed hybrid fields as inferred. No profile format field changed; the profile `schema_version` remains `1.0`.
+
+**v1.0.1.** Field paths (`confirmed_fields`, explanation `field_path`) were described as "dot-notation" without a grammar, leaving two readings undefined: whether confirming an object-valued path also confirms its descendants, and how a literal property name containing a `.` is addressed (it renders identically to a nested path). Section 5.7 now defines the grammar: a path parses as `.`-separated segments, a confirmed path covers the whole value beneath it, and a property name containing a `.` (or `\`) is not path-addressable, so a confirmation intended for a nested path must not also trust a same-rendering literal key. This closes a trust ambiguity in the safe direction; property names without dots, which is every field this specification defines, are unaffected. No profile format field changed; the profile `schema_version` remains `1.0`.
+
+**v1.0.1.** Section 9.5 described the explanation entry's `conflict` field as "whether multiple levels declared values for this field", which could be read as flagging a conflict even when every level declared the identical value. That reading is not what the resolution rules of Section 5.7 mean by a conflict (identical declarations agree; there is nothing to resolve), and it would make `conflicts_detected` nearly always true in any layered deployment, destroying its diagnostic value. The wording now states that `conflict` indicates multiple levels declared differing values. `conflict_resolution` and `competing_values` accompany only such genuine disagreements. No profile format field changed; the profile `schema_version` remains `1.0`.
+
+---
+
+*MESA - Metadata and Environment Semantics for Agents. Version 1.0.1. Core specification. See also: MESA Overview, MESA Enrichment, MESA Getting Started Guide, and mesa-core Module Proposal. Discussion and contributions are welcome via GitHub Issues.*

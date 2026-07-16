@@ -1019,7 +1019,9 @@ These are the highest-impact entities in most deployments. If you profile nothin
 
 ## 9. Profile Validation
 
-A formal MESA validation tool does not yet exist. Until one does, use this AI prompt to review your profiles:
+Two validators exist. `mesa-lint` (`pip install mesa-lint`) checks profiles and profile stores from the command line or CI: `mesa-lint path/to/mesa_profile.json`, or `--strict` to fail on warnings. It builds on `mesa_core.validate_document`, so it reports every malformed-document error the library reports, and adds opinionated warnings of its own (a `confirm` entity with no `control_reason`, a helper declaring `triggers_automations: none`, and the like), which the library does not. Programmatically, `mesa_core.validate_document(doc)` returns the library's errors as a report, and `SemanticProfile.from_dict` raises `MesaValidationError` on a malformed document.
+
+Both catch what a schema can catch. For the judgement a schema cannot make, whether a declaration is actually true of your home, the AI prompt below is still the fastest review:
 
 ```
 Please review this MESA semantic profile for issues.
@@ -1081,13 +1083,13 @@ Once the kernel is in place, here is a sensible order for adding enrichment base
 
 ## 11. Community Tooling Roadmap
 
-These tools do not exist yet. They are what the community needs to build for MESA to achieve broad adoption. If you are a developer looking for a high-impact contribution, this is where to start.
+Some of these have shipped and are marked as such; the rest are what the community needs to build for MESA to achieve broad adoption. If you are a developer looking for a high-impact contribution, the unbuilt ones are where to start.
 
 **Reference profile generator.** A tool that reads an integration's existing `strings.json`, service definitions, device classes, and entity descriptions, and emits a kernel-level MESA profile automatically. This would make Level 1 conformance a CI check rather than a manual task.
 
-**mesa-core.** The reference Python module implementing the MESA Specification. Provides profile storage, enforcement engine, inheritance resolution, conflict resolution, temporal constraint evaluation, privacy enforcement, and all MESA MCP tools. Install with `pip install mesa-core`. This is the primary community deliverable.
+**mesa-core. Shipped.** The reference Python module implementing the MESA Specification. Provides profile storage, enforcement engine, inheritance resolution, conflict resolution, temporal constraint evaluation, privacy enforcement, and all MESA MCP tools. Install with `pip install mesa-core`. This is the primary community deliverable.
 
-**`TriggerValidator`.** Built into mesa-core: `TriggerValidator(store).validate(get_automation_configs)` cross-references your declared `triggers_automations: none` profiles against your actual HA automation configurations. Run it at startup and when automations change. If an entity you declared `none` is found in an automation trigger or condition block, you get a `ValidationIssue` with the automation ID, the entity's role in that automation, and a recommendation. This prevents the silent safety gap where an operator declares `none` and later adds an automation without updating the profile. One caveat: automations that reference entities indirectly (device triggers, or the `target` blocks of purpose-specific triggers in HA 2026.7+) are only visible to validation when the host supplies the `expand_target` callback; if yours does not, prefer `unknown` over `none` for entities driven that way.
+**`TriggerValidator`. Shipped.** Built into mesa-core: `TriggerValidator(store).validate(get_automation_configs)` cross-references your declared `triggers_automations: none` profiles against your actual HA automation configurations. Run it at startup and when automations change. If an entity you declared `none` is found in an automation trigger or condition block, you get a `ValidationIssue` with the automation ID, the entity's role in that automation, and a recommendation. This prevents the silent safety gap where an operator declares `none` and later adds an automation without updating the profile. One caveat: automations that reference entities indirectly (device triggers, or the `target` blocks of purpose-specific triggers in HA 2026.7+) are only visible to validation when the host supplies the `expand_target` callback; if yours does not, prefer `unknown` over `none` for entities driven that way.
 
 ```python
 from mesa_core import TriggerValidator
@@ -1098,7 +1100,7 @@ for issue in issues:
     print(f"WARNING: {issue.entity_id} declared none but found in {issue.automation_id} as {issue.role}")
 ```
 
-**`mesa-lint`.** A CLI tool and GitHub Action that validates MESA profiles. A viable first version is approximately 200 lines of Python and should check:
+**`mesa-lint`. Shipped** (`pip install mesa-lint`, https://github.com/sfox38/mesa-lint). A CLI tool and GitHub Action that validates MESA profiles against mesa-core's own validator, so the linter and the library agree on what is malformed by construction. It checks:
 - All seven kernel fields present (`semantic_tags`, `control_mode`, `triggers_automations`, `reversible`, `reversibility_cost`, `side_effect_scope`, `privacy_classification.level`)
 - `metadata_origin.source` present and a valid enum value
 - All predicate operators use canonical tokens or are declared as `ha_condition` type
@@ -1106,8 +1108,6 @@ for issue in issues:
 - `control_mode: autonomous` on security domain entities flagged as a warning
 - `reversible: true` on notification or webhook entities flagged as potentially incorrect
 - `inferred_ai` profiles missing `confidence` or `generated_at` flagged as malformed
-
-A crude validator that catches these classes of error will do more for adoption than perfect documentation. If you build this, share it via GitHub Issues.
 
 **Profile inheritance debugger.** The `mesa_explain_profile` tool (defined in the Specification Section 9.5) returns the full inheritance resolution path for any entity, showing which profile level contributed each effective field and whether any conflict resolution rule was applied. When an agent refuses an action and you cannot tell why, this is the first tool to reach for. MCP servers running mesa-core implementing Level 3 SHOULD expose this tool. Catches missing required fields, invalid operator tokens, and common semantic mistakes. Runs in CI so integration developers get feedback automatically.
 

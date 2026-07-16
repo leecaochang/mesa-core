@@ -8,7 +8,7 @@ mesa-core decides whether an AI agent should be allowed to act on a smart-home d
 
 When an assistant tries to turn on a light, unlock the front door, or change the thermostat, mesa-core answers three questions: is this allowed, should the user confirm it first, and why. It ships with safe defaults (a light is fine to control automatically; unlike a lock) that you refine for each home.
 
-It is the reference implementation of the [MESA specification](documents/MESA-Specification.md). It has no runtime dependencies and never talks to Home Assistant directly: you hand it device state through callback functions, and it hands you decisions.
+It is the reference implementation of the [MESA specification](https://github.com/sfox38/mesa-core/blob/main/documents/MESA-Specification.md). It has no runtime dependencies and never talks to Home Assistant directly: you hand it device state through callback functions, and it hands you decisions.
 
 ```bash
 pip install mesa-core
@@ -94,15 +94,15 @@ if profile is not None:
 
 ## Documentation
 
-- [MESA Overview](documents/MESA-Overview.md) - the problem MESA solves, in plain terms
-- [Getting Started](documents/MESA-Getting-Started.md) - write your first profile
-- [Specification](documents/MESA-Specification.md) - the full normative reference
-- [Enrichment](documents/MESA-Enrichment.md) - optional advanced domains
-- [Module Proposal](documents/MESA-Module.md) - how this library is built
+- [MESA Overview](https://github.com/sfox38/mesa-core/blob/main/documents/MESA-Overview.md) - the problem MESA solves, in plain terms
+- [Getting Started](https://github.com/sfox38/mesa-core/blob/main/documents/MESA-Getting-Started.md) - write your first profile
+- [Specification](https://github.com/sfox38/mesa-core/blob/main/documents/MESA-Specification.md) - the full normative reference
+- [Enrichment](https://github.com/sfox38/mesa-core/blob/main/documents/MESA-Enrichment.md) - optional advanced domains
+- [Module Proposal](https://github.com/sfox38/mesa-core/blob/main/documents/MESA-Module.md) - how this library is built
 
 ## Status
 
-mesa-core v1.2 is ready for use: profile storage and inheritance, enforcement with confirmation, temporal constraints including solar conditions, the MCP retrieval tools, privacy controls, the advisory lease protocol, and portable profile export/import are all implemented. Multi-agent lease preemption is planned for v2.
+mesa-core v1.2.1 is ready for use: profile storage and inheritance, enforcement with confirmation, temporal constraints including solar conditions, the MCP retrieval tools, privacy controls, the advisory lease protocol, and portable profile export/import are all implemented. Multi-agent lease preemption is planned for v2.
 
 ```bash
 git clone https://github.com/sfox38/mesa-core
