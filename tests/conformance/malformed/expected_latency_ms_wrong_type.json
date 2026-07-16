@@ -1,0 +1,15 @@
+{
+  "semantic_profile": {
+    "schema_version": "1.0",
+    "metadata_origin": {"source": "user", "confidence": 1.0},
+    "semantic_tags": ["lighting.ambient"],
+    "operational_boundaries": {
+      "control_mode": "autonomous",
+      "triggers_automations": "none",
+      "reversible": true,
+      "expected_latency_ms": true,
+      "side_effect_scope": "entity_only"
+    }
+  },
+  "privacy_classification": {"level": "normal"}
+}

@@ -1,0 +1,8 @@
+{
+  "semantic_profile": {
+    "schema_version": "1.0",
+    "metadata_origin": {"source": "user", "confidence": 1.0},
+    "semantic_tags": ["security.camera"]
+  },
+  "privacy_classification": {"level": "sensitive", "access_logging_recommended": "true"}
+}

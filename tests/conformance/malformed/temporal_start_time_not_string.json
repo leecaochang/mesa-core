@@ -1,0 +1,21 @@
+{
+  "semantic_profile": {
+    "schema_version": "1.0",
+    "metadata_origin": {"source": "user", "confidence": 1.0},
+    "semantic_tags": ["security.access_control"],
+    "operational_boundaries": {
+      "control_mode": "confirm",
+      "triggers_automations": "none",
+      "reversible": true,
+      "side_effect_scope": "room_localized",
+      "temporal_constraints": [
+        {
+          "id": "no_lock_changes_at_night",
+          "condition": {"type": "time_range", "start_time": 2300, "end_time": "06:00"},
+          "effect": {"control_mode": "prohibited"}
+        }
+      ]
+    }
+  },
+  "privacy_classification": {"level": "normal"}
+}

@@ -1,0 +1,30 @@
+{
+  "semantic_profile": {
+    "schema_version": "1.0",
+    "metadata_origin": {"source": "user", "confidence": 1.0},
+    "semantic_tags": ["media.multiroom"],
+    "operational_boundaries": {
+      "control_mode": "autonomous",
+      "triggers_automations": "none",
+      "reversible": true,
+      "side_effect_scope": "entity_only",
+      "declared_limits": [
+        {
+          "id": "night_volume",
+          "predicate": {
+            "entity": "input_boolean.night_mode",
+            "operator": "eq",
+            "value": true
+          },
+          "limit": {
+            "service": "media_player.volume_set",
+            "parameter": "volume_level",
+            "min_value": true
+          },
+          "human_reason": "A boolean bound is not a number (Spec 6.4)."
+        }
+      ]
+    }
+  },
+  "privacy_classification": {"level": "normal"}
+}

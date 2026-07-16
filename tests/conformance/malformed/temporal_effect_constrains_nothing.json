@@ -1,0 +1,21 @@
+{
+  "semantic_profile": {
+    "schema_version": "1.0",
+    "metadata_origin": {"source": "user", "confidence": 1.0},
+    "semantic_tags": ["lighting.dimming"],
+    "operational_boundaries": {
+      "control_mode": "autonomous",
+      "triggers_automations": "none",
+      "reversible": true,
+      "side_effect_scope": "room_localized",
+      "temporal_constraints": [
+        {
+          "id": "dim_at_night",
+          "condition": {"type": "time_range", "start_time": "22:00", "end_time": "07:00"},
+          "effect": {"human_reason": "Declares neither a control_mode nor a value constraint."}
+        }
+      ]
+    }
+  },
+  "privacy_classification": {"level": "normal"}
+}

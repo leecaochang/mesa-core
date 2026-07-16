@@ -1,0 +1,12 @@
+{
+  "semantic_profile": {
+    "schema_version": "1.0",
+    "metadata_origin": {"source": "user"},
+    "person_traits": {
+      "household_role": "child",
+      "is_minor": true,
+      "associated_automations": "automation.bedtime"
+    }
+  },
+  "privacy_classification": {"level": "restricted"}
+}

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mesa-core"
-version = "1.2.0"
+version = "1.2.1"
 description = "Reference implementation of the MESA specification: a semantic safety and coordination layer for AI-operated smart environments."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -67,9 +67,11 @@ only-include = [
     "LICENSE",
     "pyproject.toml",
 ]
-# hatchling force-includes a couple of conventional root dotfiles even under
-# only-include; trim explicitly rather than accept them implicitly.
-exclude = [".gitignore"]
+# hatchling force-includes .gitignore into the sdist and ignores `exclude`
+# entirely alongside `only-include`: excluding CHANGELOG.md here was verified to
+# ship it anyway. The allowlist above is therefore the only thing keeping local
+# files out of a build. Shipping .gitignore is harmless; do not add an `exclude`
+# expecting it to work, and do not relax only-include into a blacklist.
 
 [tool.ruff]
 line-length = 100

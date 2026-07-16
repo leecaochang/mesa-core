@@ -19,8 +19,11 @@ def make_profile(
     mo: dict[str, Any] = {"source": origin}
     if origin == "inferred_ai":
         mo |= {"confidence": 0.9, "generated_at": "2026-06-01T00:00:00+00:00"}
-    if confirmed:
+    if confirmed is not None:
         mo["confirmed_fields"] = confirmed
+    elif origin == "hybrid":
+        # REQUIRED for hybrid (Spec 5.3), as confidence is for inferred_ai.
+        mo["confirmed_fields"] = []
     sp: dict[str, Any] = {"metadata_origin": mo}
     if boundaries is not None:
         sp["operational_boundaries"] = boundaries

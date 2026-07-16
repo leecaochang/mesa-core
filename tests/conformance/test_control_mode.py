@@ -125,6 +125,16 @@ def _challenge_setup() -> tuple[MesaEnforcer, dict[str, Any]]:
     return enforcer, first.confirmation_challenge
 
 
+def _token(challenge: dict[str, Any]) -> dict[str, Any]:
+    """A complete confirmation token: the token schema records the approval,
+    so approved_by and approved_at are required (Spec 6.6)."""
+    return {
+        "challenge_id": challenge["challenge_id"],
+        "approved_by": "user.alice",
+        "approved_at": NOON.isoformat(),
+    }
+
+
 def test_confirmation_round_trip() -> None:
     enforcer, challenge = _challenge_setup()
     token = {
@@ -145,7 +155,7 @@ def test_confirmation_round_trip() -> None:
 
 def test_confirmation_token_single_use() -> None:
     enforcer, challenge = _challenge_setup()
-    token = {"challenge_id": challenge["challenge_id"]}
+    token = _token(challenge)
     params = {"position": 50}
     assert enforcer.evaluate(
         "cover.x", "cover.open_cover", params, current_time=NOON, confirmation_token=token
@@ -159,7 +169,7 @@ def test_confirmation_token_single_use() -> None:
 
 def test_confirmation_token_expires() -> None:
     enforcer, challenge = _challenge_setup()
-    token = {"challenge_id": challenge["challenge_id"]}
+    token = _token(challenge)
     late = NOON + timedelta(seconds=121)
     result = enforcer.evaluate(
         "cover.x", "cover.open_cover", {"position": 50}, current_time=late, confirmation_token=token
@@ -170,7 +180,7 @@ def test_confirmation_token_expires() -> None:
 
 def test_confirmation_token_bound_to_exact_parameters() -> None:
     enforcer, challenge = _challenge_setup()
-    token = {"challenge_id": challenge["challenge_id"]}
+    token = _token(challenge)
     drifted = enforcer.evaluate(
         "cover.x", "cover.open_cover", {"position": 100}, current_time=NOON, confirmation_token=token
     )
@@ -185,7 +195,8 @@ def test_unknown_challenge_rejected() -> None:
         "cover.open_cover",
         {"position": 50},
         current_time=NOON,
-        confirmation_token={"challenge_id": "forged"},
+        confirmation_token={"challenge_id": "forged", "approved_by": "user.alice",
+                            "approved_at": NOON.isoformat()},
     )
     assert not result.allowed
 
@@ -376,7 +387,7 @@ def test_empty_permitted_values_blocks_service() -> None:
         "lock.front_door", "lock.lock", {"entity_id": "lock.front_door"}, current_time=NOON
     )
     assert not challenge.allowed and challenge.confirmation_challenge is not None
-    token = {"challenge_id": challenge.confirmation_challenge["challenge_id"]}
+    token = _token(challenge.confirmation_challenge)
     confirmed = enforcer.evaluate(
         "lock.front_door",
         "lock.lock",

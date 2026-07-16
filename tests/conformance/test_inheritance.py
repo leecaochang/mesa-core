@@ -83,7 +83,10 @@ def test_three_level_inheritance_no_conflicts() -> None:
     assert effective.operational_boundaries.reversibility_cost == "none"
     assert effective.operational_boundaries.state_volatility == "low"
     assert set(effective.semantic_tags) == {"lighting.task", "lighting.ambient"}
-    assert not explanation.conflicts_detected
+    # semantic_tags is declared at two levels, so Spec 9.5 reports it as a
+    # conflict even though the union retains every tag; no other field competes.
+    conflicting = {e.field_path for e in explanation.explanation if e.conflict}
+    assert conflicting == {"semantic_tags"}
     levels = {e.field_path: e.provided_by_level for e in explanation.explanation}
     assert levels["operational_boundaries.control_mode"] == "entity"
     assert levels["operational_boundaries.reversibility_cost"] == "domain"

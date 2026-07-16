@@ -1,0 +1,22 @@
+{
+  "semantic_profile": {
+    "schema_version": "1.0",
+    "metadata_origin": {"source": "user", "confidence": 1.0},
+    "semantic_tags": ["automation.maintenance"],
+    "operational_boundaries": {
+      "control_mode": "autonomous",
+      "triggers_automations": "none",
+      "reversible": true,
+      "side_effect_scope": "room_localized",
+      "temporal_constraints": [
+        {
+          "id": "weekend_only",
+          "condition": {"type": "day_of_week", "days": ["saturday", "sunday"]},
+          "effect": {"control_mode": "prohibited"},
+          "human_reason": "Long-form weekday names are not canonical tokens (Spec 6.5)."
+        }
+      ]
+    }
+  },
+  "privacy_classification": {"level": "normal"}
+}

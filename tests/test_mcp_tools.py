@@ -348,3 +348,78 @@ def test_shipped_tools_schema_in_sync() -> None:
     )
     assert shipped == tools_schema_document()
     assert set(shipped["tools"]) == set(TOOL_SCHEMAS)
+
+
+# -- schema enforcement at the handler boundary (Finding B) --------------------
+# A raw_sdk / custom registry dispatches straight to the handler, so the handler
+# must enforce the declared schema itself rather than trusting a transport to.
+
+
+def test_direct_dispatch_rejects_unknown_property() -> None:
+    registry, store = make_registry()
+    store.set("light.a", make_profile("light.a"))
+    # {"domins": [...]} was previously ignored and the query ran unfiltered.
+    result = call(registry, "mesa_query_profiles", domins=["light"])
+    assert result["error"] == "invalid_query"
+    assert "domins" in result["message"]
+
+
+def test_direct_dispatch_rejects_wrong_typed_params() -> None:
+    registry, store = make_registry()
+    store.set("light.a", make_profile("light.a"))
+    # A string is not coerced to a boolean (bool("false") is True, Spec 9.2).
+    assert (
+        call(registry, "mesa_query_profiles", include_inferred="false")["error"]
+        == "invalid_query"
+    )
+    # include_fields must be an array, not a string consumed character by character.
+    assert (
+        call(registry, "mesa_query_profiles", include_fields="operational_boundaries")["error"]
+        == "invalid_query"
+    )
+    # A numeric entity_id is invalid_query, not an internal server_error.
+    numeric = call(registry, "mesa_get_profile", entity_id=123)
+    assert numeric["error"] == "invalid_query"
+
+
+def test_direct_dispatch_rejects_explicit_null() -> None:
+    registry, store = make_registry()
+    store.set("light.a", make_profile("light.a"))
+    # The published schema names a type for every field and does not allow null,
+    # so an explicit null is a wrong type, not "omitted". limit=null previously
+    # reached min(None, 200) and returned a server_error.
+    assert call(registry, "mesa_query_profiles", domains=None)["error"] == "invalid_query"
+    assert call(registry, "mesa_query_profiles", include_inferred=None)["error"] == "invalid_query"
+    assert call(registry, "mesa_query_profiles", limit=None)["error"] == "invalid_query"
+
+
+def test_direct_dispatch_rejects_out_of_range_limit() -> None:
+    registry, _ = make_registry()
+    assert call(registry, "mesa_query_profiles", limit=9999)["error"] == "invalid_query"
+    assert call(registry, "mesa_query_profiles", limit=0)["error"] == "invalid_query"
+
+
+def test_query_pagination_returned_matches_results_after_denial() -> None:
+    # Finding C: a row denied to the caller is omitted from results, so
+    # pagination.returned must reflect the shaped list, not the pre-access page.
+    store = ProfileStore(backend=MemoryBackend())
+    store.set(
+        "camera.front_door",
+        make_profile(
+            "camera.front_door",
+            privacy={
+                "level": "restricted",
+                "deny_response_mode": "omit",
+                "access_roles": {"deny_for": ["guest"]},
+            },
+        ),
+    )
+    guest = CallerContext(
+        caller_id="user.guest", roles=["guest"], is_authenticated=True, session_id="s"
+    )
+    registry, _ = make_registry(store, caller_context_fn=lambda: guest)
+    result = call(registry, "mesa_query_profiles", domains=["camera"])
+    assert result["results"] == []
+    assert result["pagination"]["returned"] == len(result["results"]) == 0
+    # total_matched still counts the entity that matched the filters pre-shaping.
+    assert result["total_matched"] == 1

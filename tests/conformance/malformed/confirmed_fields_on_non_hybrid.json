@@ -1,0 +1,19 @@
+{
+  "semantic_profile": {
+    "schema_version": "1.0",
+    "metadata_origin": {
+      "source": "inferred_ai",
+      "confidence": 0.8,
+      "generated_at": "2026-05-01T10:00:00+00:00",
+      "confirmed_fields": ["control_mode"]
+    },
+    "semantic_tags": ["lighting.ambient"],
+    "operational_boundaries": {
+      "control_mode": "autonomous",
+      "triggers_automations": "none",
+      "reversible": true,
+      "side_effect_scope": "entity_only"
+    }
+  },
+  "privacy_classification": {"level": "normal"}
+}

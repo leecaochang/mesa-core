@@ -146,6 +146,26 @@ def test_invalid_archive_and_policy_rejected() -> None:
         import_profiles(store, export_profiles(store), on_conflict="merge")
 
 
+def test_non_object_archive_rejected() -> None:
+    # A non-dict top-level archive must be a MesaValidationError, not a raw
+    # AttributeError from reaching for .get on a list.
+    store = ProfileStore(backend=MemoryBackend())
+    with pytest.raises(MesaValidationError):
+        import_profiles(store, [1, 2, 3])  # type: ignore[arg-type]
+
+
+def test_wrong_typed_section_is_reported() -> None:
+    # Falsy wrong-typed sections must be quarantined, not coerced to "no entities".
+    store = ProfileStore(backend=MemoryBackend())
+    for bad in ([], "", 0, False):
+        archive: dict[str, Any] = {"mesa_export": {"format_version": "1.0", "entities": bad}}
+        result = import_profiles(store, archive)
+        assert not result.ok
+        assert "entities" in result.invalid
+    # A genuinely absent section is still fine.
+    assert import_profiles(store, {"mesa_export": {"format_version": "1.0"}}).ok
+
+
 def test_origin_survives_the_round_trip() -> None:
     source = populated_store()
     archive = export_profiles(source)
