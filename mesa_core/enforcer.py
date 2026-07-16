@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -21,6 +22,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from mesa_core.audit import MesaAuditEvent, emit_audit_event
+from mesa_core.exceptions import MesaError
 from mesa_core.inheritance import InheritanceResolver
 from mesa_core.privacy import CallerContext, PrivacyEnforcer
 from mesa_core.profile import (
@@ -41,6 +43,11 @@ __all__ = [
 
 CHALLENGE_TTL_SECONDS = 120  # Spec 6.6: challenges SHOULD expire within 120 seconds.
 INFERRED_CONFIDENCE_FLOOR = 0.7  # Spec 5.4 Rule 3.
+VALID_MODES = ("enforced", "advisory")
+
+# HA reports an entity it cannot read as one of these rather than as absent, so
+# they are unevaluable states, not values to compare against (Spec 6.5).
+UNAVAILABLE_STATES = frozenset({"unavailable", "unknown", "none", ""})
 
 
 @dataclass
@@ -69,6 +76,18 @@ class ConfirmationManager:
         self.ttl_seconds = ttl_seconds
         self._challenges: dict[str, dict[str, Any]] = {}
 
+    def _evict_expired(self, now: datetime) -> None:
+        """Drop challenges past their TTL.
+
+        Redemption is the only other removal path, and an unconfirmed call is
+        never redeemed, so without this every challenge a user declined or
+        ignored would be retained for the life of the process.
+        """
+        for challenge_id in [
+            cid for cid, record in self._challenges.items() if now > record["expires_at"]
+        ]:
+            del self._challenges[challenge_id]
+
     def issue(
         self,
         entity_id: str,
@@ -76,6 +95,7 @@ class ConfirmationManager:
         params: dict[str, Any] | None,
         now: datetime,
     ) -> dict[str, Any]:
+        self._evict_expired(now)
         challenge_id = uuid.uuid4().hex
         expires_at = now + timedelta(seconds=self.ttl_seconds)
         self._challenges[challenge_id] = {
@@ -104,6 +124,14 @@ class ConfirmationManager:
         challenge_id = token.get("challenge_id")
         if not isinstance(challenge_id, str):
             return False, "confirmation token missing challenge_id"
+        # The token records the approval (Spec 6.6 token schema: challenge_id,
+        # approved_by, approved_at). A token without them produces no audit
+        # trail, which is the protocol's stated purpose, so it is rejected rather
+        # than accepted with a warning.
+        if not isinstance(token.get("approved_by"), str) or not token["approved_by"]:
+            return False, "confirmation token missing approved_by (Spec 6.6)"
+        if not isinstance(token.get("approved_at"), str) or not token["approved_at"]:
+            return False, "confirmation token missing approved_at (Spec 6.6)"
         record = self._challenges.get(challenge_id)
         if record is None:
             return False, "unknown or expired confirmation challenge"
@@ -125,11 +153,34 @@ class ConfirmationManager:
         return True, "confirmed"
 
 
+def _finite_float(value: Any) -> float | None:
+    """``float(value)`` when it yields a finite number, else None (not comparable).
+
+    Catches OverflowError so an arbitrarily large JSON integer cannot crash
+    enforcement, and rejects NaN/Infinity so a non-finite bound fails closed:
+    every comparison with NaN is false, which would otherwise silently disable
+    a declared limit.
+    """
+    try:
+        result = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return result if math.isfinite(result) else None
+
+
 def _compare(operator: str, state: str, value: Any) -> bool | None:
-    """Evaluate a canonical predicate operator. None = unevaluable."""
+    """Evaluate a canonical predicate operator. None = unevaluable.
+
+    Numeric operands go through _finite_float: a state of "nan"/"inf" (or an
+    oversized integer value) is unevaluable, not a clean False. Every comparison
+    with NaN is false, which would otherwise read the predicate as inactive and
+    silently drop the limit instead of failing closed (Spec 6.5).
+    """
     try:
         if operator in ("gt", "gte", "lt", "lte"):
-            s, v = float(state), float(value)
+            s, v = _finite_float(state), _finite_float(value)
+            if s is None or v is None:
+                return None
             return {
                 "gt": s > v,
                 "gte": s >= v,
@@ -141,7 +192,10 @@ def _compare(operator: str, state: str, value: Any) -> bool | None:
                 # HA states are strings; booleans map onto on/off conventions.
                 matched = state.lower() in (("on", "true") if value else ("off", "false"))
             elif isinstance(value, int | float):
-                matched = float(state) == float(value)
+                s, v = _finite_float(state), _finite_float(value)
+                if s is None or v is None:
+                    return None
+                matched = s == v
             else:
                 matched = state == str(value)
             return matched if operator == "eq" else not matched
@@ -149,7 +203,7 @@ def _compare(operator: str, state: str, value: Any) -> bool | None:
             return any(state == str(item) for item in value)
         if operator == "contains":
             return str(value) in state
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     return None
 
@@ -168,6 +222,11 @@ class MesaEnforcer:
         get_solar_elevation: Callable[[datetime], float | None] | None = None,
         challenge_ttl_seconds: int = CHALLENGE_TTL_SECONDS,
     ) -> None:
+        if mode not in VALID_MODES:
+            # Anything unrecognised would read as advisory and silently disable
+            # enforcement deployment-wide, so a typo fails closed at wiring time
+            # rather than at the first prohibited call.
+            raise MesaError(f"invalid mode {mode!r}: expected one of {list(VALID_MODES)}")
         self.store = store
         self.resolver = resolver or InheritanceResolver(store=store)
         self.mode = mode
@@ -207,11 +266,23 @@ class MesaEnforcer:
                 "a get_state callback; treated as active (fail-closed)"
             )
             return True
-        state = self.get_state(str(entity))
-        if state is None:
+        try:
+            state = self.get_state(str(entity))
+        except Exception as err:
+            # A host callback failure is an evaluation failure, not a licence to
+            # drop the limit.
             warnings.append(
-                f"declared limit {limit_id!r}: entity {entity!r} unavailable; "
+                f"declared limit {limit_id!r}: get_state({entity!r}) failed ({err!r}); "
                 "treated as active (fail-closed)"
+            )
+            return True
+        if state is None or state.strip().lower() in UNAVAILABLE_STATES:
+            # HA reports an unreadable entity as the strings "unavailable" or
+            # "unknown" rather than as absent. Comparing against them would
+            # evaluate cleanly to False and silently disable the limit (Spec 6.5).
+            warnings.append(
+                f"declared limit {limit_id!r}: entity {entity!r} is unavailable "
+                f"(state={state!r}); treated as active (fail-closed)"
             )
             return True
         outcome = _compare(str(predicate.get("operator")), state, predicate.get("value"))
@@ -239,23 +310,27 @@ class MesaEnforcer:
         value = service_params[parameter]
         human_reason = limit.get("human_reason") or "declared limit"
         if "max_value" in spec:
-            try:
-                if float(value) > float(spec["max_value"]):
-                    return (
-                        f"{parameter}={value} exceeds max_value {spec['max_value']}: "
-                        f"{human_reason}"
-                    )
-            except (TypeError, ValueError):
+            observed = _finite_float(value)
+            bound = _finite_float(spec["max_value"])
+            if observed is None or bound is None:
+                # Non-numeric, non-finite, or oversized: fail closed. A NaN bound
+                # would make every comparison false and silently disable the limit.
                 return f"{parameter}={value!r} is not comparable to max_value: {human_reason}"
+            if observed > bound:
+                return (
+                    f"{parameter}={value} exceeds max_value {spec['max_value']}: "
+                    f"{human_reason}"
+                )
         if "min_value" in spec:
-            try:
-                if float(value) < float(spec["min_value"]):
-                    return (
-                        f"{parameter}={value} is below min_value {spec['min_value']}: "
-                        f"{human_reason}"
-                    )
-            except (TypeError, ValueError):
+            observed = _finite_float(value)
+            bound = _finite_float(spec["min_value"])
+            if observed is None or bound is None:
                 return f"{parameter}={value!r} is not comparable to min_value: {human_reason}"
+            if observed < bound:
+                return (
+                    f"{parameter}={value} is below min_value {spec['min_value']}: "
+                    f"{human_reason}"
+                )
         if "permitted_values" in spec:
             permitted = spec["permitted_values"]
             if not any(str(value) == str(item) for item in permitted):
@@ -278,8 +353,16 @@ class MesaEnforcer:
         explanation = self.resolver.explain(entity_id)
         profile = explanation.effective_profile
         warnings = list(explanation.warnings)
+        # Set when a confirmation token is redeemed, so the approval reaches the
+        # audit trail the protocol promises (Spec 6.6).
+        approved: dict[str, Any] | None = None
 
-        def audit(decision: str, rule: str | None, level: int = logging.INFO) -> None:
+        def audit(
+            decision: str,
+            rule: str | None,
+            level: int = logging.INFO,
+            details: dict[str, Any] | None = None,
+        ) -> None:
             emit_audit_event(
                 MesaAuditEvent(
                     event_type="enforcement_decision",
@@ -290,6 +373,7 @@ class MesaEnforcer:
                     roles=caller_context.effective_roles() if caller_context else [],
                     profile_version=profile.metadata.profile_version,
                     rule_applied=rule,
+                    details=details or {},
                 ),
                 level=level,
             )
@@ -382,13 +466,13 @@ class MesaEnforcer:
                     )
                     if not ok:
                         return blocked(message, "control_mode:confirm")
+                    # redeem() guarantees both fields are present strings.
+                    approved = {
+                        "approved_by": confirmation_token["approved_by"],
+                        "approved_at": confirmation_token["approved_at"],
+                    }
                     warnings.append(
-                        "confirmation accepted"
-                        + (
-                            f" (approved_by={confirmation_token.get('approved_by')})"
-                            if confirmation_token.get("approved_by")
-                            else ""
-                        )
+                        f"confirmation accepted (approved_by={approved['approved_by']})"
                     )
                 else:
                     challenge = self.confirmations.issue(entity_id, service, service_params, now)
@@ -419,7 +503,12 @@ class MesaEnforcer:
                 warnings.append(f"advisory: {violation}")
 
         # Allowed calls are audited at DEBUG: full trails opt in via log level.
-        audit("allowed", None, level=logging.DEBUG)
+        # A confirmed write is the exception: it is the record of a human
+        # approving a restricted action, so it is always audited (Spec 6.6).
+        if approved is not None:
+            audit("allowed", "control_mode:confirm", level=logging.INFO, details=approved)
+        else:
+            audit("allowed", None, level=logging.DEBUG)
         return EnforcementResult(
             allowed=True,
             reason="permitted",

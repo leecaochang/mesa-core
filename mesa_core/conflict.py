@@ -8,8 +8,10 @@ baseline.
 
 from __future__ import annotations
 
+import copy
 import json
-from dataclasses import dataclass, field
+import math
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from mesa_core.profile import (
@@ -17,12 +19,13 @@ from mesa_core.profile import (
     HELPER_DOMAINS,
     ORIGIN_AUTHORITY,
     PRIVACY_RANK,
-    TRUSTED_ORIGINS,
     ControlMode,
     MetadataOrigin,
     PrivacyLevel,
     SemanticProfile,
     TriggersAutomations,
+    iter_unmodelled,
+    path_segment,
 )
 
 SCOPE_RANK = {"entity": 4, "area": 3, "integration": 2, "domain": 1}
@@ -70,6 +73,16 @@ _PERSON_RULE_D_FIELDS = (
     "associated_zones",
     "associated_automations",
     "presence_entity",
+)
+
+# Fields that gate an access decision, so an unconfirmed inferred value must be
+# excluded entirely rather than fall back to (Spec 5.4 Rule 3, Spec 17):
+# access_roles grants/denies/relaxes by role, and is_minor forces restricted.
+# The remaining privacy and person fields are informational (they do not gate
+# access), and an inferred value there only ever adds caution, so they keep the
+# normal Rule D trusted-tier-then-fallback resolution.
+_ACCESS_DECISION_FIELDS = frozenset(
+    {"privacy_classification.access_roles", "person_traits.is_minor"}
 )
 
 
@@ -141,16 +154,146 @@ class _Candidate:
         value = self.value
         if hasattr(value, "value"):
             value = value.value
-        return {"level": self.layer.level, "origin": self.origin.value, "value": value}
+        # Copied so the explanation owns its payload rather than aliasing the
+        # input layer's mutable value.
+        return {
+            "level": self.layer.level,
+            "origin": self.origin.value,
+            "value": copy.deepcopy(value),
+        }
+
+
+def _normalize_numbers(value: Any) -> Any:
+    """Collapse equivalent numeric encodings before canonical serialisation.
+
+    JSON has one number type, so ``1`` and ``1.0`` (or ``0`` and ``-0.0``) are
+    the same value and must not read as differing declarations. A finite,
+    integral float becomes the exact int; converting the other way (int to
+    float) would falsely merge distinct integers beyond 2**53. Booleans are a
+    distinct type and are never numbers.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+        return int(value)
+    if isinstance(value, dict):
+        return {key: _normalize_numbers(sub) for key, sub in value.items()}
+    if isinstance(value, list):
+        return [_normalize_numbers(sub) for sub in value]
+    return value
 
 
 def _canonical(value: Any) -> str:
-    """Order-insensitive serialisation, for detecting whether entries differ."""
-    return json.dumps(value, sort_keys=True, default=str)
+    """Value-semantic serialisation, for detecting whether entries differ.
+
+    Order-insensitive for object keys, and numerically normalised so equal
+    JSON numbers with different encodings compare equal.
+    """
+    return json.dumps(_normalize_numbers(value), sort_keys=True, default=str)
+
+
+def _comparison_view(path: str, value: Any) -> Any:
+    """Field-aware view of a value for the distinct-declarations check.
+
+    The role arrays inside ``access_roles`` are consumed as sets by the
+    privacy enforcer, so their order and duplicates carry no semantics:
+    reordered or duplicated role lists are the same declaration, not a
+    conflict. Arrays elsewhere stay order-sensitive; only this field is
+    normalised, and only for comparison, never for the effective value.
+    """
+    if path == "privacy_classification.access_roles" and isinstance(value, dict):
+        return {
+            key: sorted(set(sub))
+            if isinstance(sub, list) and all(isinstance(item, str) for item in sub)
+            else sub
+            for key, sub in value.items()
+        }
+    return value
 
 
 def _is_confirmed(profile: SemanticProfile, path: str) -> bool:
-    return path in profile.metadata.confirmed_fields
+    """Whether a human has confirmed this field path.
+
+    Only ``hybrid`` profiles carry authoritative confirmations: confirming a
+    field of an inferred_ai profile promotes that field to hybrid (Spec 5.4
+    Rule 6), so ``confirmed_fields`` on any other origin is self-contradictory
+    and is never honoured. Without this check an inferred_ai profile could
+    self-certify and escape Rules 8 and 9.
+
+    A confirmed path covers the whole value declared at it: confirming
+    ``x_vendor.a`` confirms everything under ``x_vendor.a``, so a descendant
+    path produced by recursive composition is confirmed by its ancestor.
+
+    Dot-notation is the path grammar, so a property name containing a dot (or
+    a backslash) is not path-addressable: a ``confirmed_fields`` entry always
+    parses as nested segments and never names such a key, and a rendered path
+    containing an escaped segment (see ``path_segment``) matches only through
+    a confirmed clean ancestor, never exactly. Without this, a confirmation
+    intended for a nested path would also trust a literal dotted key that
+    happens to render identically.
+    """
+    if profile.metadata.source != MetadataOrigin.HYBRID:
+        return False
+    for confirmed in profile.metadata.confirmed_fields:
+        if "\\" in confirmed:
+            # Not a parseable dot-notation path; it can name no field.
+            continue
+        if path.startswith(f"{confirmed}."):
+            return True
+        if path == confirmed and "\\" not in path:
+            return True
+    return False
+
+
+def _is_trusted_for(profile: SemanticProfile, path: str) -> bool:
+    """Field-level trust tier for Rule D (Spec 5.4 Rule 6).
+
+    developer and user profiles are trusted for every field they declare. A
+    hybrid profile is trusted only for the fields a human actually confirmed:
+    its unconfirmed fields remain inferred and stay in the lower tier, so they
+    cannot displace a trusted declaration.
+    """
+    source = profile.metadata.source
+    if source in (MetadataOrigin.DEVELOPER, MetadataOrigin.USER):
+        return True
+    if source == MetadataOrigin.HYBRID:
+        return _is_confirmed(profile, path)
+    return False
+
+
+def _shape_trusted(layer: Layer, path: str, value: Any) -> bool:
+    """Trust used when layers disagree on a node's SHAPE (object vs atomic).
+
+    Same as _is_trusted_for, except a hybrid object also counts as trusted when
+    a confirmed path lies under this node AND resolves to a field the object
+    actually contains: its children resolve individually afterwards, so a
+    confirmed child must be able to keep the node an object. A confirmation
+    naming a nonexistent or stale descendant confirms nothing, so it must not
+    promote the object's unconfirmed fields past a trusted declaration. An
+    atomic hybrid value still needs the node path itself confirmed.
+    """
+    if _is_trusted_for(layer.profile, path):
+        return True
+    if (
+        isinstance(value, dict)
+        and value
+        and layer.profile.metadata.source == MetadataOrigin.HYBRID
+    ):
+        prefix = f"{path}."
+        for confirmed in layer.profile.metadata.confirmed_fields:
+            if "\\" in confirmed:
+                # Not a parseable dot-notation path (see _is_confirmed).
+                continue
+            if not confirmed.startswith(prefix):
+                continue
+            node = value
+            for segment in confirmed[len(prefix):].split("."):
+                if not (isinstance(node, dict) and segment in node):
+                    break
+                node = node[segment]
+            else:
+                return True
+    return False
 
 
 def _coerced_control_mode(layer: Layer) -> tuple[ControlMode, str | None]:
@@ -388,8 +531,18 @@ class ConflictResolver:
         getter_attr: str,
         container: str,
         resolution: Resolution,
+        *,
+        trusted_only: bool = False,
     ) -> tuple[bool, Any]:
-        """Resolve one Rule D field. Returns (was_declared, effective_value)."""
+        """Resolve one Rule D field. Returns (was_declared, effective_value).
+
+        ``trusted_only`` excludes untrusted candidates entirely rather than
+        falling back to them when no trusted layer declares the field. It is set
+        for the fields that drive access decisions (privacy access_roles, person
+        is_minor): Spec 5.4 Rule 3 forbids using an unconfirmed inferred privacy
+        value for an access decision at all, so an untrusted-only declaration
+        must leave the field at its safe default, not select the untrusted value.
+        """
         candidates: list[_Candidate] = []
         for layer in layers:
             if not layer.profile.declared(path):
@@ -399,14 +552,28 @@ class ConflictResolver:
         if not candidates:
             return False, None
 
-        trusted = [c for c in candidates if c.origin in TRUSTED_ORIGINS]
+        trusted = [c for c in candidates if _is_trusted_for(c.layer.profile, path)]
+        if trusted_only and not trusted:
+            # Only untrusted layers declare an access-decision field: it cannot be
+            # used (Rule 3), so it resolves as undeclared and keeps its default.
+            resolution.warnings.append(
+                f"{path}: declared only by an unconfirmed inferred profile; ignored for "
+                "access decisions (Spec 5.4 Rule 3)"
+            )
+            return False, None
         pool = trusted if trusted else candidates
         winner = max(pool, key=lambda c: (c.scope_rank, c.origin_authority))
 
         def _comparable(v: Any) -> Any:
             return v.value if hasattr(v, "value") else v
 
-        distinct_values = {repr(_comparable(c.value)) for c in candidates}
+        # _canonical, not repr: repr(dict) preserves insertion order, so two
+        # semantically identical objects would read as differing values and
+        # report a false conflict (Spec 9.5 erratum: conflict = differing).
+        # _comparison_view additionally normalises set-valued role arrays.
+        distinct_values = {
+            _canonical(_comparison_view(path, _comparable(c.value))) for c in candidates
+        }
         conflict = len(distinct_values) > 1
         if conflict:
             if trusted and len(trusted) < len(candidates):
@@ -420,7 +587,7 @@ class ConflictResolver:
         resolution.explanations.append(
             FieldExplanation(
                 field_path=path,
-                effective_value=_comparable(winner.value),
+                effective_value=copy.deepcopy(_comparable(winner.value)),
                 provided_by_level=winner.layer.level,
                 provided_by_origin=winner.origin.value,
                 conflict=conflict,
@@ -428,7 +595,10 @@ class ConflictResolver:
                 competing_values=[c.describe() for c in candidates] if conflict else None,
             )
         )
-        return True, winner.value
+        # Deep-copied so the caller's effective profile owns its value: the
+        # winner is otherwise a live reference into the input layer, and a
+        # read-modify-write of the merged profile would mutate the source.
+        return True, copy.deepcopy(winner.value)
 
     # -- Rule D (array union): declared_limits / temporal_constraints -----------
 
@@ -467,16 +637,18 @@ class ConflictResolver:
         if not contributing:
             return False, None
 
+        # Winning entries are deep-copied so the effective profile owns its
+        # limits: editing a merged entry must not write through to the layer.
         merged: list[dict[str, Any]] = []
         collision = False
         for cands in keyed.values():
             if len(cands) == 1:
-                merged.append(cands[0].value)
+                merged.append(copy.deepcopy(cands[0].value))
                 continue
-            trusted = [c for c in cands if c.origin in TRUSTED_ORIGINS]
+            trusted = [c for c in cands if _is_trusted_for(c.layer.profile, path)]
             pool = trusted if trusted else cands
             winner = max(pool, key=lambda c: (c.scope_rank, c.origin_authority))
-            merged.append(winner.value)
+            merged.append(copy.deepcopy(winner.value))
             if len({_canonical(c.value) for c in cands}) > 1:
                 collision = True
 
@@ -484,7 +656,7 @@ class ConflictResolver:
         resolution.explanations.append(
             FieldExplanation(
                 field_path=path,
-                effective_value=merged,
+                effective_value=copy.deepcopy(merged),
                 provided_by_level=most_specific.level,
                 provided_by_origin=most_specific.profile.metadata.source.value,
                 conflict=collision,
@@ -499,7 +671,9 @@ class ConflictResolver:
                         {
                             "level": layer.level,
                             "origin": layer.profile.metadata.source.value,
-                            "value": getattr(layer.profile.operational_boundaries, attr),
+                            "value": copy.deepcopy(
+                                getattr(layer.profile.operational_boundaries, attr)
+                            ),
                         }
                         for layer in contributing
                     ]
@@ -549,34 +723,79 @@ class ConflictResolver:
                 setattr(effective.operational_boundaries, attr, value)
 
         for attr in _PRIVACY_RULE_D_FIELDS:
+            path = f"privacy_classification.{attr}"
             declared, value = self.resolve_rule_d(
                 layers,
-                f"privacy_classification.{attr}",
+                path,
                 attr,
                 "privacy_classification",
                 resolution,
+                trusted_only=path in _ACCESS_DECISION_FIELDS,
             )
             if declared:
                 setattr(effective.privacy_classification, attr, value)
 
         for attr in _PERSON_RULE_D_FIELDS:
+            path = f"person_traits.{attr}"
             declared, value = self.resolve_rule_d(
                 layers,
-                f"person_traits.{attr}",
+                path,
                 attr,
                 "person_traits",
                 resolution,
+                trusted_only=path in _ACCESS_DECISION_FIELDS,
             )
             if declared:
                 setattr(effective.person_traits, attr, value)
 
-        # Effective tags are the union across levels (Spec 9.2).
+        # Effective tags are the union across levels (Spec 9.2). The explanation
+        # names the most specific contributing layer (Spec 9.5 wants a per-field
+        # entry for every effective field, not only the kernel).
         tags: list[str] = []
+        tag_layers: list[Layer] = []
         for layer in sorted(layers, key=lambda layer: -SCOPE_RANK.get(layer.level, 0)):
+            if layer.profile.semantic_tags:
+                tag_layers.append(layer)
             for tag in layer.profile.semantic_tags:
                 if tag not in tags:
                     tags.append(tag)
         effective.semantic_tags = tags
+        if tags:
+            contributor = max(tag_layers, key=lambda layer: SCOPE_RANK.get(layer.level, 0))
+            # Spec 9.5 (as clarified by the erratum): conflict is true when the
+            # levels declared DIFFERING tag sets. Tags union rather than replace,
+            # so no contribution is lost, but disagreeing declarations are still
+            # reported; identical declarations agree and are not a conflict.
+            conflict = (
+                len({_canonical(sorted(layer.profile.semantic_tags)) for layer in tag_layers})
+                > 1
+            )
+            resolution.explanations.append(
+                FieldExplanation(
+                    field_path="semantic_tags",
+                    effective_value=list(tags),
+                    provided_by_level=contributor.level,
+                    provided_by_origin=contributor.profile.metadata.source.value,
+                    conflict=conflict,
+                    conflict_resolution=(
+                        "Rule (union, Spec 9.2): tags from every declaring level are retained"
+                        if conflict
+                        else None
+                    ),
+                    competing_values=(
+                        [
+                            {
+                                "level": layer.level,
+                                "origin": layer.profile.metadata.source.value,
+                                "value": list(layer.profile.semantic_tags),
+                            }
+                            for layer in tag_layers
+                        ]
+                        if conflict
+                        else None
+                    ),
+                )
+            )
 
         # diagnostic_profile: Rule D-style pick (most specific declaring layer).
         diag_layers = [
@@ -585,23 +804,344 @@ class ConflictResolver:
             if layer.profile.diagnostic_profile is not None
         ]
         if diag_layers:
+            # Trusted tier first, then scope, then authority: the same order as
+            # Rule D, so an untrusted entity-scope diagnostic profile cannot
+            # displace a trusted broader one.
+            trusted_diag = [
+                layer for layer in diag_layers
+                if _is_trusted_for(layer.profile, "diagnostic_profile")
+            ]
             best = max(
-                diag_layers,
+                trusted_diag or diag_layers,
                 key=lambda layer: (
                     SCOPE_RANK.get(layer.level, 0),
-                    layer.profile.metadata.source in TRUSTED_ORIGINS,
+                    ORIGIN_AUTHORITY[layer.profile.metadata.source],
                 ),
             )
-            effective.diagnostic_profile = best.profile.diagnostic_profile
+            # Deep-copied: the effective profile owns its diagnostics, so a
+            # read-modify-write of the merged result cannot mutate the layer.
+            effective.diagnostic_profile = copy.deepcopy(best.profile.diagnostic_profile)
+            # Spec 9.5: conflict is true when more than one level declared a
+            # distinct diagnostic_profile (the others were passed over by Rule D).
+            conflict = (
+                len({_canonical(layer.profile.diagnostic_profile) for layer in diag_layers}) > 1
+            )
+            if conflict and trusted_diag and len(trusted_diag) < len(diag_layers):
+                reason: str | None = "Rule D: lower-tier declaration never overrides trusted tier"
+            elif conflict:
+                reason = "Rule D: most specific scope wins, then origin authority"
+            else:
+                reason = None
+            resolution.explanations.append(
+                FieldExplanation(
+                    field_path="diagnostic_profile",
+                    effective_value=copy.deepcopy(best.profile.diagnostic_profile),
+                    provided_by_level=best.level,
+                    provided_by_origin=best.profile.metadata.source.value,
+                    conflict=conflict,
+                    conflict_resolution=reason,
+                    competing_values=(
+                        [
+                            {
+                                "level": layer.level,
+                                "origin": layer.profile.metadata.source.value,
+                                "value": copy.deepcopy(layer.profile.diagnostic_profile),
+                            }
+                            for layer in diag_layers
+                        ]
+                        if conflict
+                        else None
+                    ),
+                )
+            )
 
-        # Effective metadata: the most specific contributing layer's provenance.
+        # Effective metadata: the most specific contributing layer's provenance,
+        # except profile_valid_for. That field is an invalidation trigger, not
+        # provenance, so it is resolved per subfield under Rule D and Rule E
+        # (trusted tier, then scope) rather than taken wholesale: a domain-level
+        # subfield is inherited when a more-specific profile omits it, and an
+        # unconfirmed hybrid subfield cannot overwrite a trusted one.
         if layers:
             most_specific = max(layers, key=lambda layer: SCOPE_RANK.get(layer.level, 0))
-            effective.metadata = most_specific.profile.metadata
+            # Deep-copied unconditionally: without the copy the effective profile
+            # holds the source layer's own metadata object (and its mutable
+            # confirmed_fields list), so a read-modify-write of the merged
+            # result would mutate the input profile.
+            effective.metadata = replace(
+                copy.deepcopy(most_specific.profile.metadata),
+                profile_valid_for=self._resolve_valid_for(layers, resolution),
+            )
             for layer in layers:
                 resolution.warnings.extend(layer.profile.parse_warnings)
 
+        # Carry forward the enrichment and vendor fields this version does not
+        # model, so a complete effective profile stays complete (Spec 23),
+        # resolving each field under Rule D rather than letting a whole profile
+        # win by scope. Trust is per field: a hybrid layer wins an unmodelled
+        # field only when that field's path is in its confirmed_fields, so an
+        # unconfirmed hybrid enrichment field cannot overwrite a developer one.
+        self._carry_unmodelled(layers, effective, resolution)
+
+        # The effective profile declares exactly the fields resolution settled.
+        effective.declared_paths = {e.field_path for e in resolution.explanations}
+
         return effective, resolution
+
+    @staticmethod
+    def _resolve_valid_for(
+        layers: list[Layer], resolution: Resolution
+    ) -> dict[str, Any] | None:
+        """Resolve ``profile_valid_for`` per subfield (Rule D + Rule E).
+
+        Each subfield (the four typed members of Spec 5.5 and any forward-
+        compatible extra) is resolved independently: a subfield unique to one
+        level is inherited, and a subfield declared at several levels is picked
+        trusted tier first (a hybrid layer is trusted for the specific path in
+        its confirmed_fields, e.g. ``profile_valid_for.review_after_days``), then
+        most specific scope, then origin authority. Resolving the object as one
+        field would drop a disjoint inherited subfield and recognise confirmation
+        only of the whole object.
+        """
+        keyed: dict[str, list[_Candidate]] = {}
+        order: list[str] = []
+        declared = False
+        for layer in layers:
+            value = layer.profile.metadata.profile_valid_for
+            if not isinstance(value, dict):
+                continue
+            declared = True
+            for key, sub in value.items():
+                if key not in keyed:
+                    order.append(key)
+                keyed.setdefault(key, []).append(_Candidate(layer, sub))
+        if not declared:
+            # No layer declared the object at all; a declared-empty {} is kept.
+            return None
+        merged: dict[str, Any] = {}
+        for key in order:
+            cands = keyed[key]
+            # path_segment, as in unmodelled resolution: a literal dotted key
+            # is not path-addressable (Spec 5.7), so it must not be trusted by
+            # a confirmed_fields entry that parses as nested segments, and the
+            # explanation renders it escaped.
+            path = f"profile_valid_for.{path_segment(key)}"
+            trusted = [c for c in cands if _is_trusted_for(c.layer.profile, path)]
+            winner = max(trusted or cands, key=lambda c: (c.scope_rank, c.origin_authority))
+            merged[key] = copy.deepcopy(winner.value)
+            conflict = len({_canonical(c.value) for c in cands}) > 1
+            if conflict and trusted and len(trusted) < len(cands):
+                reason: str | None = "Rule D: lower-tier declaration never overrides trusted tier"
+            elif conflict:
+                reason = "Rule D: most specific scope wins, then origin authority"
+            else:
+                reason = None
+            resolution.explanations.append(
+                FieldExplanation(
+                    field_path=path,
+                    effective_value=copy.deepcopy(winner.value),
+                    provided_by_level=winner.layer.level,
+                    provided_by_origin=winner.origin.value,
+                    conflict=conflict,
+                    conflict_resolution=reason,
+                    competing_values=[c.describe() for c in cands] if conflict else None,
+                )
+            )
+        return merged
+
+    @staticmethod
+    def _carry_unmodelled(
+        layers: list[Layer], effective: SemanticProfile, resolution: Resolution
+    ) -> None:
+        """Resolve the unmodelled enrichment and vendor fields onto ``effective``.
+
+        Each top-level unmodelled entry is merged across the layers that declare
+        it. See ``_merge_unmodelled`` for the per-node rule; the top-level entries
+        are gathered here in first-seen order so a stable, order-independent result
+        is produced regardless of layer iteration order.
+        """
+        roots: dict[tuple[str, ...], list[tuple[Layer, str, Any]]] = {}
+        order: list[tuple[str, ...]] = []
+        for layer in layers:
+            for write_path, confirmed_path, value in iter_unmodelled(layer.profile.raw):
+                if write_path not in roots:
+                    order.append(write_path)
+                roots.setdefault(write_path, []).append((layer, confirmed_path, value))
+        for write_path in order:
+            ConflictResolver._merge_unmodelled(roots[write_path], write_path, effective, resolution)
+
+    @staticmethod
+    def _merge_unmodelled(
+        cands: list[tuple[Layer, str, Any]],
+        write_path: tuple[str, ...],
+        effective: SemanticProfile,
+        resolution: Resolution,
+        suppress_untrusted: bool = False,
+    ) -> None:
+        """Resolve one unmodelled node across layers and write it onto ``effective.raw``.
+
+        All candidates share the same ``confirmed_path`` (they are the same node
+        seen at different layers). When every declaring layer supplies a non-empty
+        object here, the node's subfields are composed: keys unique to one layer
+        compose (Rule E), and a key declared at several layers recurses. When the
+        layers disagree on shape (some objects, some scalars/arrays/empty
+        objects), which SHAPE wins is itself a Rule D decision, taken over the
+        trusted tier first: a lower-tier scalar or empty object therefore cannot
+        force two trusted objects to resolve atomically and erase their disjoint
+        subfields, but a trusted, more specific scalar still overrides a broader
+        trusted object. If the winning shape is an object, the object candidates
+        compose below and the atomic declarations are recorded as the losing
+        side of the conflict; if it is atomic, the node resolves atomically.
+
+        ``suppress_untrusted`` is set for the subtree under an object that beat a
+        TRUSTED atomic declaration: that declaration is a trusted competitor for
+        every child, so a child with no trusted declaration of its own is
+        discarded rather than carried, and the object's unconfirmed fields
+        cannot piggyback past it on a confirmed sibling.
+        """
+        confirmed_path = cands[0][1]
+        object_cands = [c for c in cands if isinstance(c[2], dict) and c[2]]
+        if len(object_cands) == len(cands):
+            ConflictResolver._compose_children(
+                cands, write_path, effective, resolution, suppress_untrusted
+            )
+            return
+
+        trusted = [c for c in cands if _shape_trusted(c[0], c[1], c[2])]
+        pool = trusted or cands
+        winner = max(
+            pool,
+            key=lambda c: (
+                SCOPE_RANK.get(c[0].level, 0),
+                ORIGIN_AUTHORITY[c[0].profile.metadata.source],
+            ),
+        )
+
+        if isinstance(winner[2], dict) and winner[2]:
+            # The object shape wins: the objects compose per subfield, and the
+            # atomic declarations lose as one conflict at this node (Spec 9.5).
+            atomic_trusted = any(
+                _is_trusted_for(c[0].profile, c[1])
+                for c in cands
+                if c not in object_cands
+            )
+            ConflictResolver._compose_children(
+                object_cands,
+                write_path,
+                effective,
+                resolution,
+                suppress_untrusted or atomic_trusted,
+            )
+            composed: Any = effective.raw
+            for key in write_path:
+                if not isinstance(composed, dict) or key not in composed:
+                    # Every child was discarded (each faced the trusted atomic
+                    # competitor without a trusted declaration of its own), so
+                    # nothing effective exists at this node to explain.
+                    return
+                composed = composed[key]
+            resolution.explanations.append(
+                FieldExplanation(
+                    field_path=confirmed_path,
+                    effective_value=copy.deepcopy(composed),
+                    provided_by_level=winner[0].level,
+                    provided_by_origin=winner[0].profile.metadata.source.value,
+                    conflict=True,
+                    conflict_resolution=(
+                        "Rule D: layers disagree on this node's shape; the trusted "
+                        "tier's objects compose and the atomic declarations lose"
+                    ),
+                    competing_values=[
+                        {
+                            "level": c[0].level,
+                            "origin": c[0].profile.metadata.source.value,
+                            "value": copy.deepcopy(c[2]),
+                        }
+                        for c in cands
+                    ],
+                )
+            )
+            return
+        if suppress_untrusted and not trusted:
+            # An ancestor of this node was declared atomically by a trusted
+            # layer; with no trusted declaration of its own, this value loses
+            # to that competitor rather than being carried (Spec 5.4 Rule 6).
+            resolution.warnings.append(
+                f"{confirmed_path}: unconfirmed value discarded; a trusted layer "
+                "declared this subtree atomically (Rule D)"
+            )
+            return
+        target: dict[str, Any] = effective.raw
+        for key in write_path[:-1]:
+            nxt = target.get(key)
+            if not isinstance(nxt, dict):
+                nxt = {}
+                target[key] = nxt
+            target = nxt
+        target[write_path[-1]] = copy.deepcopy(winner[2])
+
+        # Spec 9.5: every effective field gets an explanation keyed by its
+        # confirmed_fields path, and conflict is true when the levels declared
+        # DIFFERING values for this node (identical multi-level declarations
+        # agree, they do not compete; see the Spec 9.5 erratum).
+        conflict = len({_canonical(value) for _, _, value in cands}) > 1
+        if conflict and trusted and len(trusted) < len(cands):
+            reason: str | None = "Rule D: lower-tier declaration never overrides trusted tier"
+        elif conflict:
+            reason = "Rule D: most specific scope wins, then origin authority"
+        else:
+            reason = None
+        resolution.explanations.append(
+            FieldExplanation(
+                field_path=confirmed_path,
+                effective_value=copy.deepcopy(winner[2]),
+                provided_by_level=winner[0].level,
+                provided_by_origin=winner[0].profile.metadata.source.value,
+                conflict=conflict,
+                conflict_resolution=reason,
+                competing_values=(
+                    [
+                        {
+                            "level": c[0].level,
+                            "origin": c[0].profile.metadata.source.value,
+                            "value": copy.deepcopy(c[2]),
+                        }
+                        for c in cands
+                    ]
+                    if conflict
+                    else None
+                ),
+            )
+        )
+
+    @staticmethod
+    def _compose_children(
+        cands: list[tuple[Layer, str, Any]],
+        write_path: tuple[str, ...],
+        effective: SemanticProfile,
+        resolution: Resolution,
+        suppress_untrusted: bool = False,
+    ) -> None:
+        """Compose object candidates per subfield (Rule E), recursing shared keys.
+
+        Every candidate is a non-empty dict. Keys unique to one layer are carried;
+        keys declared by several layers resolve as their own node.
+        ``suppress_untrusted`` propagates a trusted atomic competitor declared at
+        an ancestor (see ``_merge_unmodelled``).
+        """
+        keys: list[str] = []
+        for _, _, value in cands:
+            for key in value:
+                if key not in keys:
+                    keys.append(key)
+        for key in keys:
+            child = [
+                (layer, f"{cpath}.{path_segment(key)}", value[key])
+                for layer, cpath, value in cands
+                if key in value
+            ]
+            ConflictResolver._merge_unmodelled(
+                child, (*write_path, key), effective, resolution, suppress_untrusted
+            )
 
     def merge(
         self, higher_authority_profile: SemanticProfile, lower_authority_profile: SemanticProfile

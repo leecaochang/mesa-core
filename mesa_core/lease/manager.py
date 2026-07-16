@@ -16,6 +16,8 @@ no-priority baseline; ``caller_priority`` is accepted but unused.
 from __future__ import annotations
 
 import asyncio
+import logging
+import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -26,6 +28,8 @@ from mesa_core.audit import MesaAuditEvent, emit_audit_event
 from mesa_core.exceptions import LeaseNotFoundError, MesaValidationError
 from mesa_core.lease.registry import Lease, LeaseRegistry
 from mesa_core.store import ProfileStore
+
+logger = logging.getLogger("mesa_core.lease")
 
 MAX_LEASE_DURATION_SECONDS = 30.0
 
@@ -95,6 +99,10 @@ class LeaseManager:
         self.get_state = get_state
         self.on_lease_event = on_lease_event
         self._registry = LeaseRegistry()
+        # The registry is reached from threads (arequest/arelease offload with
+        # asyncio.to_thread), and granting is a check-then-act across holding()
+        # and add(). Reentrant because the lifecycle methods sweep as they go.
+        self._lock = threading.RLock()
 
     # -- events ------------------------------------------------------------------
 
@@ -109,7 +117,9 @@ class LeaseManager:
                 details={"lease_id": lease.lease_id, "entities": list(lease.entities)},
             )
         )
-        if self.on_lease_event is not None:
+        if self.on_lease_event is None:
+            return
+        try:
             self.on_lease_event(
                 {
                     "event_type": "mesa_lease_expired",
@@ -119,10 +129,34 @@ class LeaseManager:
                     "timestamp": now.isoformat(),
                 }
             )
+        except Exception:
+            # The lease is already released; a host event-bus failure must not
+            # abandon the remaining releases or fail the caller's own request.
+            logger.exception("on_lease_event callback failed for lease %s", lease.lease_id)
 
     def _sweep(self, now: datetime) -> None:
         for lease in self._registry.sweep_expired(now):
             self._emit(lease, "natural_expiry", now)
+
+    def _supersede(self, session_id: str, entities: list[str]) -> None:
+        """Drop a session's prior hold on entities it is re-acquiring.
+
+        A same-session re-request is a refresh (Spec 21.4). Leaving the old
+        lease in place would double-count the hold, publish the superseded
+        lease's expiry as ``earliest_expiry``, and fire ``mesa_lease_expired``
+        for an entity the session still holds, which tells native automations
+        to resume normal operation mid-operation. No event is emitted here: the
+        hold is continuous, so nothing ended.
+        """
+        taken = set(entities)
+        for lease in self._registry.by_session(session_id):
+            remaining = [entity for entity in lease.entities if entity not in taken]
+            if len(remaining) == len(lease.entities):
+                continue
+            if remaining:
+                lease.entities = remaining
+            else:
+                self._registry.remove(lease.lease_id)
 
     # -- automation interaction (Spec 21.5) ----------------------------------------
 
@@ -133,7 +167,14 @@ class LeaseManager:
                 "treated as active (fail-closed)"
             )
             return True
-        state = self.get_state(automation_id)
+        try:
+            state = self.get_state(automation_id)
+        except Exception as err:
+            warnings.append(
+                f"protected automation {automation_id}: get_state failed ({err!r}); "
+                "treated as active (fail-closed)"
+            )
+            return True
         if state is None or state in ("unavailable", "unknown"):
             warnings.append(
                 f"protected automation {automation_id}: state unavailable; "
@@ -218,6 +259,32 @@ class LeaseManager:
         caller_priority: float | None = None,
         now: datetime | None = None,
     ) -> LeaseResponse:
+        with self._lock:
+            return self._request_locked(
+                entities,
+                duration_seconds,
+                session_id=session_id,
+                caller_id=caller_id,
+                intent=intent,
+                priority_level=priority_level,
+                preemption_handling=preemption_handling,
+                caller_priority=caller_priority,
+                now=now,
+            )
+
+    def _request_locked(
+        self,
+        entities: list[str],
+        duration_seconds: float,
+        *,
+        session_id: str,
+        caller_id: str = "unknown",
+        intent: str | None = None,
+        priority_level: str = "cooperative",
+        preemption_handling: str = "rollback_abort",
+        caller_priority: float | None = None,
+        now: datetime | None = None,
+    ) -> LeaseResponse:
         now = now or datetime.now()
         self._sweep(now)
         if not entities:
@@ -263,6 +330,7 @@ class LeaseManager:
         expires_at = now + timedelta(seconds=granted_duration)
 
         if entities_granted:
+            self._supersede(session_id, entities_granted)
             self._registry.add(
                 Lease(
                     lease_id=lease_id,
@@ -311,42 +379,47 @@ class LeaseManager:
         holder's; a mismatch reads as not-found so other sessions' leases are
         never disclosed (Spec 21.6)."""
         now = now or datetime.now()
-        self._sweep(now)
-        lease = self._registry.get(lease_id)
-        if lease is None or (session_id is not None and lease.session_id != session_id):
-            raise LeaseNotFoundError(f"lease {lease_id!r} does not exist or has expired")
-        self._registry.remove(lease_id)
-        self._emit(lease, "early_release", now)
-        return lease
+        with self._lock:
+            self._sweep(now)
+            lease = self._registry.get(lease_id)
+            if lease is None or (session_id is not None and lease.session_id != session_id):
+                raise LeaseNotFoundError(f"lease {lease_id!r} does not exist or has expired")
+            self._registry.remove(lease_id)
+            self._emit(lease, "early_release", now)
+            return lease
 
     def release_session(self, session_id: str, *, now: datetime | None = None) -> int:
         """Release all leases of a terminated session (Spec 21.4). Returns count."""
         now = now or datetime.now()
-        self._sweep(now)
-        leases = self._registry.by_session(session_id)
-        for lease in leases:
-            self._registry.remove(lease.lease_id)
-            self._emit(lease, "session_terminated", now)
-        return len(leases)
+        with self._lock:
+            self._sweep(now)
+            leases = self._registry.by_session(session_id)
+            for lease in leases:
+                self._registry.remove(lease.lease_id)
+                self._emit(lease, "session_terminated", now)
+            return len(leases)
 
     def expire(self, now: datetime | None = None) -> None:
         """Sweep expired leases, emitting their events. Hosts SHOULD call this
         periodically for timely events; correctness does not depend on it."""
-        self._sweep(now or datetime.now())
+        with self._lock:
+            self._sweep(now or datetime.now())
 
     def active_leases(self, now: datetime | None = None) -> list[Lease]:
-        return self._registry.active(now or datetime.now())
+        with self._lock:
+            return self._registry.active(now or datetime.now())
 
     def sensor_state(self, now: datetime | None = None) -> dict[str, Any]:
         """The ``binary_sensor.mesa_lease_active`` state and attributes
         (Spec 21.4), for hosts that expose the sensor natively."""
         now = now or datetime.now()
-        self._sweep(now)
-        active = self._registry.active(now)
-        leased: set[str] = set()
-        for lease in active:
-            leased.update(lease.entities)
-        earliest = min((lease.expires_at for lease in active), default=None)
+        with self._lock:
+            self._sweep(now)
+            active = self._registry.active(now)
+            leased: set[str] = set()
+            for lease in active:
+                leased.update(lease.entities)
+            earliest = min((lease.expires_at for lease in active), default=None)
         return {
             "state": "on" if active else "off",
             "active_lease_count": len(active),

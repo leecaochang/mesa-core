@@ -8,6 +8,7 @@
       "description": "Query MESA semantic profiles by domain, tag, area, intent, or origin, with pagination. Returns effective (inheritance-resolved) profiles.",
       "inputSchema": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
           "domains": {
             "type": "array",
@@ -74,6 +75,7 @@
       "description": "Retrieve the complete effective MESA profile for one entity, optionally including its diagnostic profile.",
       "inputSchema": {
         "type": "object",
+        "additionalProperties": false,
         "required": [
           "entity_id"
         ],
@@ -97,6 +99,7 @@
       "description": "Return the full inheritance resolution path for an entity: which profile level contributed each effective field and why. The first tool to reach for when agent behaviour is unexpected.",
       "inputSchema": {
         "type": "object",
+        "additionalProperties": false,
         "required": [
           "entity_id"
         ],
@@ -115,6 +118,7 @@
       "description": "Retrieve caller identity and roles for the current session.",
       "inputSchema": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {}
       }
     },
@@ -122,6 +126,7 @@
       "description": "Request a temporary advisory coordination lease on entities (max 30s). Not a lock: native automations remain unaware. Partial grants are valid; denial_reasons explains denied entities.",
       "inputSchema": {
         "type": "object",
+        "additionalProperties": false,
         "required": [
           "entities",
           "duration_seconds"
@@ -170,6 +175,7 @@
       "description": "Release a held coordination lease early to signal completion.",
       "inputSchema": {
         "type": "object",
+        "additionalProperties": false,
         "required": [
           "lease_id"
         ],

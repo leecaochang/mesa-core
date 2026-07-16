@@ -13,8 +13,10 @@ import hashlib
 import json
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any, TypeVar
 
+from mesa_core import validation
 from mesa_core.backends import StorageBackend
 from mesa_core.exceptions import InvalidCursorError, MesaValidationError
 from mesa_core.profile import (
@@ -37,6 +39,18 @@ _AREA_PREFIX = "__area__:"
 MAX_PAGE_SIZE = 200
 
 
+_EnumT = TypeVar("_EnumT", bound=StrEnum)
+
+
+def _parse_enum(enum: type[_EnumT], value: Any, where: str) -> _EnumT:
+    """Parse an enum value into a MesaValidationError rather than a raw ValueError."""
+    try:
+        return enum(value)
+    except ValueError as err:
+        valid = [member.value for member in enum]
+        raise MesaValidationError(f"{where}: invalid value {value!r} (valid: {valid})") from err
+
+
 @dataclass
 class DeploymentDefaults:
     """Operator-configured defaults for unprofiled entities (Spec 5.8)."""
@@ -47,11 +61,56 @@ class DeploymentDefaults:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DeploymentDefaults:
+        """Parse and validate operator defaults.
+
+        Nested overrides are validated here rather than at use: they are read
+        only for entities with no profile at any level, so a malformed override
+        would sit inert until the one case it exists to cover and then decide
+        that entity's policy from a crash or a silent wrong default.
+        """
+        if not isinstance(data, dict):
+            raise MesaValidationError(
+                f"deployment_defaults must be an object, got {type(data).__name__}"
+            )
         inner = data.get("deployment_defaults", data)
+        if not isinstance(inner, dict):
+            raise MesaValidationError(
+                f"deployment_defaults must be an object, got {type(inner).__name__}"
+            )
+        # Presence, not truthiness: `x or []` would read a falsy wrong type
+        # (0, "", false, {}) as an empty list and accept it silently.
+        domains = inner.get("triggers_automations_domains")
+        domains = [] if domains is None else domains
+        if not isinstance(domains, list) or not all(isinstance(d, str) for d in domains):
+            raise MesaValidationError(
+                "deployment_defaults.triggers_automations_domains must be an array of strings"
+            )
+        overrides = inner.get("domain_overrides")
+        overrides = {} if overrides is None else overrides
+        if not isinstance(overrides, dict):
+            raise MesaValidationError("deployment_defaults.domain_overrides must be an object")
+        for domain, override in overrides.items():
+            where = f"deployment_defaults.domain_overrides.{domain}"
+            if not isinstance(override, dict):
+                raise MesaValidationError(
+                    f"{where} must be an object, got {type(override).__name__}"
+                )
+            if "control_mode" in override:
+                _parse_enum(ControlMode, override["control_mode"], f"{where}.control_mode")
+            if "triggers_automations" in override:
+                _parse_enum(
+                    TriggersAutomations,
+                    override["triggers_automations"],
+                    f"{where}.triggers_automations",
+                )
         return cls(
-            default_control_mode=ControlMode(inner.get("default_control_mode", "confirm")),
-            triggers_automations_domains=list(inner.get("triggers_automations_domains") or []),
-            domain_overrides=dict(inner.get("domain_overrides") or {}),
+            default_control_mode=_parse_enum(
+                ControlMode,
+                inner.get("default_control_mode", "confirm"),
+                "deployment_defaults.default_control_mode",
+            ),
+            triggers_automations_domains=list(domains),
+            domain_overrides={k: dict(v) for k, v in overrides.items()},
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -144,17 +203,33 @@ class ProfileStore:
     # -- entity profiles ------------------------------------------------------
 
     @staticmethod
-    def _stamped_doc(profile: SemanticProfile) -> dict[str, Any]:
+    def _stamped_doc(profile: SemanticProfile, entity_id: str) -> dict[str, Any]:
         """Serialise a profile, stamping metadata_origin when the document lacks it.
 
         Level 2 implementations MUST include metadata_origin in everything they
         write (Spec Section 2); without this, a location-defaulted origin (e.g.
         developer, from a sidecar import) would degrade to unknown on reload.
+
+        The serialised document is validated before it is returned: the data
+        model is mutable and the release supports read-modify-write, so a
+        mutation that makes the profile malformed (e.g. changing the source to
+        inferred_ai without adding confidence/generated_at) must fail the write
+        rather than poison the store and raise on the next read.
         """
-        doc = profile.to_dict()
+        try:
+            doc = profile.to_dict()
+        except (AttributeError, TypeError, ValueError) as err:
+            # The typed fields are mutable, so a field can be set to a value that
+            # does not serialise (e.g. control_mode assigned a raw string, whose
+            # .value then fails). Report the write as malformed rather than let a
+            # raw AttributeError escape the promised MesaValidationError contract.
+            raise MesaValidationError(
+                f"profile for {entity_id} could not be serialised: {err}"
+            ) from err
         sp = doc.setdefault("semantic_profile", {})
         if "metadata_origin" not in sp:
             sp["metadata_origin"] = {"source": profile.metadata.source.value}
+        validation.validate_or_raise(doc, entity_id)
         return doc
 
     def get(self, entity_id: str) -> SemanticProfile | None:
@@ -164,7 +239,7 @@ class ProfileStore:
         return SemanticProfile.from_dict(entity_id, data)
 
     def set(self, entity_id: str, profile: SemanticProfile) -> None:
-        self.backend.write(entity_id, self._stamped_doc(profile))
+        self.backend.write(entity_id, self._stamped_doc(profile, entity_id))
 
     def delete(self, entity_id: str) -> None:
         self.backend.delete(entity_id)
@@ -188,7 +263,7 @@ class ProfileStore:
         return profile
 
     def set_domain_profile(self, domain: str, profile: SemanticProfile) -> None:
-        self.backend.write(f"{_DOMAIN_PREFIX}{domain}", self._stamped_doc(profile))
+        self.backend.write(f"{_DOMAIN_PREFIX}{domain}", self._stamped_doc(profile, domain))
 
     def delete_domain_profile(self, domain: str) -> None:
         self.backend.delete(f"{_DOMAIN_PREFIX}{domain}")
@@ -202,7 +277,9 @@ class ProfileStore:
         return profile
 
     def set_integration_profile(self, integration: str, profile: SemanticProfile) -> None:
-        self.backend.write(f"{_INTEGRATION_PREFIX}{integration}", self._stamped_doc(profile))
+        self.backend.write(
+            f"{_INTEGRATION_PREFIX}{integration}", self._stamped_doc(profile, integration)
+        )
 
     def delete_integration_profile(self, integration: str) -> None:
         self.backend.delete(f"{_INTEGRATION_PREFIX}{integration}")
@@ -216,7 +293,7 @@ class ProfileStore:
         return profile
 
     def set_area_profile(self, area_id: str, profile: SemanticProfile) -> None:
-        self.backend.write(f"{_AREA_PREFIX}{area_id}", self._stamped_doc(profile))
+        self.backend.write(f"{_AREA_PREFIX}{area_id}", self._stamped_doc(profile, area_id))
 
     def delete_area_profile(self, area_id: str) -> None:
         self.backend.delete(f"{_AREA_PREFIX}{area_id}")
@@ -228,9 +305,22 @@ class ProfileStore:
         return DeploymentDefaults.from_dict(data) if data is not None else None
 
     def set_deployment_defaults(self, defaults: DeploymentDefaults | dict[str, Any]) -> None:
-        if isinstance(defaults, dict):
-            defaults = DeploymentDefaults.from_dict(defaults)
-        self.backend.write(_DEPLOYMENT_DEFAULTS_KEY, defaults.to_dict())
+        # A passed-in dataclass is revalidated too, not only a dict: it is
+        # mutable, so its fields may have been set to invalid shapes since
+        # construction (e.g. domain_overrides mutated to a non-object value),
+        # which would otherwise write clean and fail later at resolution.
+        source = defaults if isinstance(defaults, dict) else self._defaults_to_dict(defaults)
+        validated = DeploymentDefaults.from_dict(source)
+        self.backend.write(_DEPLOYMENT_DEFAULTS_KEY, validated.to_dict())
+
+    @staticmethod
+    def _defaults_to_dict(defaults: DeploymentDefaults) -> dict[str, Any]:
+        try:
+            return defaults.to_dict()
+        except (AttributeError, TypeError, ValueError) as err:
+            raise MesaValidationError(
+                f"deployment_defaults could not be serialised: {err}"
+            ) from err
 
     # -- queries ----------------------------------------------------------------
 
@@ -259,7 +349,22 @@ class ProfileStore:
         return [k for k in self.entity_keys() if k not in known]
 
     def _fingerprint(self) -> str:
-        digest = hashlib.sha256("|".join(self.entity_keys()).encode())
+        """Identify the data a cursor was issued against (Spec 9.2).
+
+        Covers profile content, not just the key set: an edit that changes what
+        a filter matches, or the order of a page, reshuffles the results a
+        stored offset points into, and keys alone cannot see that. Covers the
+        inherited layers too, not only entity documents: query filters and the
+        returned page depend on the effective profile, so a domain, integration,
+        area, or deployment_defaults change can move a row across the page
+        boundary or in and out of the match set without any entity document
+        changing.
+        """
+        digest = hashlib.sha256()
+        for key in sorted(self.backend.list_keys()):
+            digest.update(key.encode())
+            doc = self.backend.read(key)
+            digest.update(json.dumps(doc, sort_keys=True, default=str).encode())
         return digest.hexdigest()[:16]
 
     def query(
@@ -344,8 +449,12 @@ class ProfileStore:
                     if tags_match == "any" and not set(tags) & effective_tags:
                         continue
                 if intents:
+                    # semantic_routing is an unmodelled field carried onto the
+                    # effective profile, so intent_tags inherited from a domain,
+                    # integration, or area profile are matched too, consistent
+                    # with what get_effective() exposes (Spec 9.2).
                     routing = (
-                        stored.raw.get("semantic_profile", {}).get("semantic_routing", {}) or {}
+                        effective.raw.get("semantic_profile", {}).get("semantic_routing", {}) or {}
                     )
                     intent_tags = effective_tags | set(routing.get("intent_tags", []))
                     if not set(intents) & intent_tags:

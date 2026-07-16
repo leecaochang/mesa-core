@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from mesa_core.exceptions import MesaValidationError
 from mesa_core.profile import MetadataOrigin, SemanticProfile
 
 SIDECAR_FILENAME = "mesa_profile.json"
@@ -43,7 +44,13 @@ def import_from_integration(integration_path: str | Path) -> SemanticProfile | N
     sidecar = path / SIDECAR_FILENAME
     if not sidecar.exists():
         return None
-    data = json.loads(sidecar.read_text())
+    try:
+        data = json.loads(sidecar.read_text())
+    except json.JSONDecodeError as err:
+        # A truncated or typo'd sidecar is malformed content like any other, and
+        # hosts run this across every installed integration catching the
+        # documented error.
+        raise MesaValidationError(f"{sidecar}: sidecar is not valid JSON: {err}") from err
     profile = SemanticProfile.from_dict(
         path.name, data, default_origin=MetadataOrigin.DEVELOPER
     )

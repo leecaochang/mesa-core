@@ -69,7 +69,9 @@ class TemporalEvaluator:
         try:
             start = time.fromisoformat(cond["start_time"])
             end = time.fromisoformat(cond["end_time"])
-        except (KeyError, ValueError):
+        except (KeyError, TypeError, ValueError):
+            # TypeError: a non-string start/end. Malformed is unevaluable, not
+            # an exception that escapes the enforcement path.
             return None
         current = now.time()
         if start <= end:
@@ -81,7 +83,13 @@ class TemporalEvaluator:
         days = cond.get("days")
         if not isinstance(days, list) or not days:
             return None
-        return _WEEKDAYS[now.weekday()] in [str(d).lower() for d in days]
+        named = [str(d).lower() for d in days]
+        if not any(day in _WEEKDAYS for day in named):
+            # No recognisable weekday: "saturday" instead of "sat" would compare
+            # cleanly to False and silently drop the constraint, so a day list
+            # naming nothing is unevaluable and the constraint stays active.
+            return None
+        return _WEEKDAYS[now.weekday()] in named
 
     def _eval_calendar(self, cond: dict[str, Any]) -> bool | None:
         calendar_id = cond.get("calendar_entity")
@@ -101,7 +109,10 @@ class TemporalEvaluator:
         # true iff the sun was already below the boundary 30 minutes ago.
         try:
             at = now - timedelta(minutes=float(cond.get("solar_offset_minutes", 0)))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
+            # OverflowError: float() of an arbitrarily large JSON integer, or a
+            # finite-but-astronomical offset exceeding timedelta's range. The
+            # condition is unevaluable and therefore stays active (Spec 6.5).
             return None
         try:
             elevation = self.get_solar_elevation(at)

@@ -16,10 +16,12 @@ because only the host can query the HA registries.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from mesa_core.exceptions import MesaValidationError
+from mesa_core.inheritance import InheritanceResolver
 from mesa_core.profile import TriggersAutomations
 from mesa_core.store import ProfileStore
 
@@ -105,22 +107,38 @@ class TriggerValidator:
         store: ProfileStore,
         *,
         expand_target: Callable[[str, str], list[str]] | None = None,
+        resolver: InheritanceResolver | None = None,
     ) -> None:
         self.store = store
         self.expand_target = expand_target
+        self.resolver = resolver or InheritanceResolver(store=store)
 
-    def _declared_none_entities(self) -> list[str]:
-        entities = []
-        for key in self.store.entity_keys():
-            profile = self.store.get(key)
-            if (
-                profile is not None
-                and profile.declared("operational_boundaries.triggers_automations")
-                and profile.operational_boundaries.triggers_automations
-                == TriggersAutomations.NONE
-            ):
-                entities.append(key)
-        return entities
+    def _is_none(self, entity_id: str) -> bool:
+        """Whether an entity reads as ``triggers_automations: none`` to an agent.
+
+        Resolved, not stored: agents consume the effective profile, so a `none`
+        inherited from a domain, integration, or area profile, or from
+        deployment defaults, skips cascade caution exactly as an entity-level
+        one does and is just as stale if the entity is in fact a trigger.
+        """
+        try:
+            effective = self.resolver.resolve(entity_id)
+        except MesaValidationError:
+            return False
+        return (
+            effective.operational_boundaries.triggers_automations == TriggersAutomations.NONE
+        )
+
+    def _declared_none_entities(self, entity_ids: Iterable[str] | None = None) -> list[str]:
+        """Entities that resolve to ``none``.
+
+        ``entity_ids`` is the host's entity registry. Without it only entities
+        carrying their own stored profile can be enumerated, so an entity that
+        inherits `none` from a broader profile and has no profile of its own is
+        invisible to the check.
+        """
+        candidates = list(entity_ids) if entity_ids is not None else self.store.entity_keys()
+        return [key for key in candidates if self._is_none(key)]
 
     def _issues_for(
         self, entity_id: str, configs: list[dict[str, Any]]
@@ -152,12 +170,21 @@ class TriggerValidator:
         return issues
 
     def validate(
-        self, get_automation_configs: Callable[[], list[dict[str, Any]]]
+        self,
+        get_automation_configs: Callable[[], list[dict[str, Any]]],
+        *,
+        entity_ids: Iterable[str] | None = None,
     ) -> list[ValidationIssue]:
-        """Cross-reference all ``none`` declarations against the automation registry."""
+        """Cross-reference every effective ``none`` against the automation registry.
+
+        ``entity_ids`` is the host's entity registry. Hosts SHOULD pass it: an
+        entity that inherits ``none`` from a domain, integration, or area
+        profile without carrying one of its own is not in the store's key set,
+        so it can only be checked when the host names it.
+        """
         configs = get_automation_configs()
         issues: list[ValidationIssue] = []
-        for entity_id in self._declared_none_entities():
+        for entity_id in self._declared_none_entities(entity_ids):
             issues.extend(self._issues_for(entity_id, configs))
         return issues
 
@@ -167,19 +194,19 @@ class TriggerValidator:
         get_automation_configs: Callable[[], list[dict[str, Any]]],
     ) -> list[ValidationIssue]:
         """Validate a single entity against the automation registry."""
-        profile = self.store.get(entity_id)
-        if (
-            profile is None
-            or not profile.declared("operational_boundaries.triggers_automations")
-            or profile.operational_boundaries.triggers_automations != TriggersAutomations.NONE
-        ):
+        if not self._is_none(entity_id):
             return []
         return self._issues_for(entity_id, get_automation_configs())
 
     async def avalidate(
-        self, get_automation_configs: Callable[[], list[dict[str, Any]]]
+        self,
+        get_automation_configs: Callable[[], list[dict[str, Any]]],
+        *,
+        entity_ids: Iterable[str] | None = None,
     ) -> list[ValidationIssue]:
-        return await asyncio.to_thread(self.validate, get_automation_configs)
+        return await asyncio.to_thread(
+            lambda: self.validate(get_automation_configs, entity_ids=entity_ids)
+        )
 
     async def avalidate_entity(
         self,

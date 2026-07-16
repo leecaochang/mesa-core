@@ -38,6 +38,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
 TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "mesa_query_profiles": {
         "type": "object",
+        "additionalProperties": False,
         "properties": {
             "domains": {"type": "array", "items": {"type": "string"}},
             "tags": {"type": "array", "items": {"type": "string"}},
@@ -55,6 +56,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "mesa_get_profile": {
         "type": "object",
+        "additionalProperties": False,
         "required": ["entity_id"],
         "properties": {
             "entity_id": {"type": "string"},
@@ -72,15 +74,21 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "mesa_explain_profile": {
         "type": "object",
+        "additionalProperties": False,
         "required": ["entity_id"],
         "properties": {
             "entity_id": {"type": "string"},
             "show_conflicts": {"type": "boolean", "default": True},
         },
     },
-    "mesa_get_caller_context": {"type": "object", "properties": {}},
+    "mesa_get_caller_context": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {},
+    },
     "mesa_request_lease": {
         "type": "object",
+        "additionalProperties": False,
         "required": ["entities", "duration_seconds"],
         "properties": {
             "entities": {"type": "array", "items": {"type": "string"}, "minItems": 1},
@@ -108,6 +116,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "mesa_release_lease": {
         "type": "object",
+        "additionalProperties": False,
         "required": ["lease_id"],
         "properties": {"lease_id": {"type": "string"}},
     },

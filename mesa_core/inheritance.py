@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from mesa_core.conflict import ConflictResolver, FieldExplanation, Layer
 from mesa_core.profile import (
+    ControlMode,
     PrivacyLevel,
     ProfileMetadata,
     SemanticProfile,
@@ -22,7 +23,7 @@ from mesa_core.profile import (
 )
 
 if TYPE_CHECKING:
-    from mesa_core.store import ProfileStore
+    from mesa_core.store import DeploymentDefaults, ProfileStore
 
 
 @dataclass
@@ -118,6 +119,27 @@ class InheritanceResolver:
         """Whether any profile is declared for this entity at any inheritance level."""
         return bool(self._gather_layers(entity_id))
 
+    @staticmethod
+    def _default_control_mode(
+        domain: str, layers: list[Layer], defaults: DeploymentDefaults | None
+    ) -> tuple[ControlMode, str, str]:
+        """Rule E default for an undeclared control_mode.
+
+        Both deployment_defaults and the built-in baseline are scoped to
+        entities with no profile at any inheritance level: operators loosen an
+        unprofiled entity via ``deployment_defaults`` but a profiled one via the
+        Section 5.7 Rule A override, and the baseline "applies before any
+        profiles have been authored" (Spec 5.8, and the control_mode precedence
+        note in Spec 4). A profiled entity that leaves control_mode undeclared
+        therefore defaults to confirm: absence is never a silent autonomous
+        default (Spec 4), and a deployment default may not loosen it.
+        """
+        if layers:
+            return ControlMode.CONFIRM, "built_in_baseline", "unknown"
+        if defaults is not None:
+            return defaults.control_mode_for(domain), "deployment_default", "user"
+        return baseline_control_mode(domain), "built_in_baseline", "unknown"
+
     def explain(
         self, entity_id: str, *, entity_profile: SemanticProfile | None = None
     ) -> ProfileExplanation:
@@ -130,14 +152,7 @@ class InheritanceResolver:
 
         # Rule E default filling for the kernel policy fields.
         if "operational_boundaries.control_mode" not in declared_paths:
-            if defaults is not None:
-                mode = defaults.control_mode_for(domain)
-                level = "deployment_default"
-                origin = "user"
-            else:
-                mode = baseline_control_mode(domain)
-                level = "built_in_baseline"
-                origin = "unknown"
+            mode, level, origin = self._default_control_mode(domain, layers, defaults)
             effective.operational_boundaries.control_mode = mode
             resolution.explanations.append(
                 FieldExplanation(
@@ -149,11 +164,15 @@ class InheritanceResolver:
             )
 
         if "operational_boundaries.triggers_automations" not in declared_paths:
-            if defaults is not None:
+            if not layers and defaults is not None:
+                # deployment_defaults are scoped to unprofiled entities (Spec 5.8).
                 triggers = defaults.triggers_for(domain)
                 level = "deployment_default"
                 origin = "user"
             else:
+                # A profiled entity with no triggers declaration takes the
+                # baseline: helpers default to likely regardless (Spec 5.4 Rule 9),
+                # so a deployment override cannot drop an inferred helper to none.
                 triggers = baseline_triggers_automations(domain)
                 level = "built_in_baseline"
                 origin = "unknown"
@@ -182,6 +201,10 @@ class InheritanceResolver:
 
         if not layers:
             effective.metadata = ProfileMetadata()
+
+        # The effective profile declares every field resolution settled,
+        # including the Rule E defaults filled above.
+        effective.declared_paths = {e.field_path for e in resolution.explanations}
 
         return ProfileExplanation(
             entity_id=entity_id,

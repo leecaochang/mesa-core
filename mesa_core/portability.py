@@ -40,6 +40,16 @@ _SECTIONS = (
 )
 
 
+def _is_importable_key(key: Any) -> bool:
+    """Whether an archive key may be written to the store.
+
+    Each archive section addresses its own storage namespace and the setter
+    applies that section's prefix, so a key carrying a reserved prefix of its
+    own would land outside the section it was declared in.
+    """
+    return isinstance(key, str) and bool(key) and not key.startswith("__")
+
+
 @dataclass
 class ImportResult:
     """Outcome of an import: what landed, what was held back, and why."""
@@ -108,6 +118,8 @@ def import_profiles(
     """
     if on_conflict not in ("skip", "overwrite", "error"):
         raise ValueError(f"invalid on_conflict: {on_conflict!r}")
+    if not isinstance(archive, dict):
+        raise MesaValidationError("not a mesa_export archive (archive must be an object)")
     inner = archive.get("mesa_export")
     if not isinstance(inner, dict):
         raise MesaValidationError("not a mesa_export archive (missing 'mesa_export' root)")
@@ -126,7 +138,12 @@ def import_profiles(
     # Conflict scan first, so on_conflict="error" is all-or-nothing.
     if on_conflict == "error":
         for section, prefix, _setter in sections:
-            for key in inner.get(section) or {}:
+            docs = inner.get(section)
+            if not isinstance(docs, dict):
+                continue
+            for key in docs:
+                if not _is_importable_key(key):
+                    continue
                 if store.backend.read(f"{prefix}{key}") is not None:
                     raise MesaError(f"import conflict: {section} key {key!r} already exists")
         if "deployment_defaults" in inner and store.backend.read(
@@ -135,9 +152,28 @@ def import_profiles(
             raise MesaError("import conflict: deployment_defaults already exist")
 
     for section, prefix, setter in sections:
-        docs = inner.get(section) or {}
+        # Absent is fine (an omitted section is empty); an explicit non-object,
+        # including null, is a wrong type and is reported, not read as absent.
+        if section not in inner:
+            continue
+        docs = inner[section]
+        if not isinstance(docs, dict):
+            result.invalid[section] = (
+                f"section must be an object of key to profile, got {type(docs).__name__}"
+            )
+            continue
         for key, doc in docs.items():
             label = f"{section}:{key}"
+            if not _is_importable_key(key):
+                # Reserved keys address the domain/integration/area/defaults
+                # namespaces. An entity entry named "__domain__:lock" would
+                # otherwise be written straight through store.set as a
+                # domain-wide policy the archive never declared as one.
+                result.invalid[label] = (
+                    f"illegal key {key!r}: '__'-prefixed keys are reserved for the "
+                    "scoped sections of the archive"
+                )
+                continue
             try:
                 profile = SemanticProfile.from_dict(key, doc)
             except MesaValidationError as err:
@@ -153,15 +189,26 @@ def import_profiles(
             else:
                 result.imported += 1
 
-    defaults = inner.get("deployment_defaults")
-    if isinstance(defaults, dict):
+    if "deployment_defaults" in inner:
+        defaults = inner["deployment_defaults"]
+        if not isinstance(defaults, dict):
+            # Quarantined, not skipped: an explicit non-object (including null)
+            # is a wrong type, and silently dropping an operator's defaults
+            # leaves the store running on a policy floor nobody chose.
+            result.invalid["deployment_defaults"] = (
+                f"must be an object, got {type(defaults).__name__}"
+            )
+            return result
         exists = store.backend.read(_DEPLOYMENT_DEFAULTS_KEY) is not None
         if exists and on_conflict == "skip":
             result.skipped_existing.append("deployment_defaults")
         else:
             try:
                 store.set_deployment_defaults(defaults)
-            except (ValueError, TypeError) as err:
+            except (MesaValidationError, ValueError, TypeError, KeyError, AttributeError) as err:
+                # DeploymentDefaults.from_dict reports malformed nested values as
+                # MesaValidationError, which is not a ValueError; a malformed
+                # defaults object must be quarantined here, not abort the import.
                 result.invalid["deployment_defaults"] = str(err)
             else:
                 if exists:
