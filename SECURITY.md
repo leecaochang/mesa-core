@@ -6,6 +6,7 @@ mesa-core is a safety enforcement component: it decides whether an AI agent's ac
 
 | Version | Supported |
 |---|---|
+| 1.3.x   | Yes       |
 | 1.2.x   | Yes       |
 | < 1.2   | No        |
 

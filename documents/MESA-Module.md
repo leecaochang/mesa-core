@@ -262,7 +262,12 @@ class SemanticProfile:
     privacy_classification: PrivacyClassification = field(default_factory=PrivacyClassification)
     person_traits: PersonTraits = field(default_factory=PersonTraits)
     inheritance_scope: str = "entity"
+    diagnostic_profile: Optional[Dict[str, Any]] = None
     raw: Dict[str, Any] = field(default_factory=dict)
+    parse_warnings: List[str] = field(default_factory=list)
+    # Dotted paths the source document explicitly declared, so Rule E can tell
+    # "absent" from "set to the default value" on reserialisation.
+    declared_paths: set = field(default_factory=set)
 
     @classmethod
     def from_dict(cls, entity_id: str, data: dict) -> "SemanticProfile":
@@ -276,8 +281,23 @@ class SemanticProfile:
     def is_inferred(self) -> bool:
         return self.metadata.source == MetadataOrigin.INFERRED_AI
 
-    def effective_confidence(self, current_date) -> float:
-        """Compute degraded confidence for inferred profiles."""
+    def effective_confidence(self) -> float:
+        """Declared confidence, or 1.0 for trusted origins and 0.0 otherwise."""
+        ...
+
+    def staleness_status(self, now: Optional[datetime] = None, *,
+                         known_entity_ids: Optional[Iterable[str]] = None,
+                         integration_version: Optional[str] = None,
+                         ha_version: Optional[str] = None) -> str:
+        """current / stale / unknown (Spec 5.4), including fired
+        profile_valid_for invalidation triggers."""
+        ...
+
+    def validity_warnings(self, *, now: Optional[datetime] = None,
+                          known_entity_ids: Optional[Iterable[str]] = None,
+                          integration_version: Optional[str] = None,
+                          ha_version: Optional[str] = None) -> List[str]:
+        """Advisory warnings from the profile_valid_for triggers (Spec 5.5)."""
         ...
 ```
 
@@ -362,7 +382,8 @@ class ProfileStore:
               limit: int = 50,
               cursor: Optional[str] = None,
               resolver: Optional[InheritanceResolver] = None) -> ProfileQueryResult: ...
-    def get_deployment_defaults(self) -> DeploymentDefaults: ...
+    # None when the operator has configured no deployment defaults.
+    def get_deployment_defaults(self) -> Optional[DeploymentDefaults]: ...
     def set_deployment_defaults(self, defaults: dict) -> None: ...
     def explain(self, entity_id: str) -> ProfileExplanation: ...
     def find_orphans(self, known_entity_ids: Iterable[str], *,
@@ -590,11 +611,15 @@ evaluator = TemporalEvaluator(
     get_solar_elevation=lambda at: -4.2,    # callback: sun elevation in degrees at `at`
 )
 
-# Returns modified OperationalBoundaries after applying active constraints
-modified_boundaries = evaluator.apply(
+# Returns a TemporalResult; the tightened boundaries are on .boundaries
+result = evaluator.apply(
     boundaries=profile.operational_boundaries,
     current_time=datetime.now()
 )
+modified_boundaries = result.boundaries
+result.active_constraint_ids  # constraints that applied
+result.active_limits          # limits contributed by those constraints
+result.warnings               # unevaluable conditions, treated as active
 ```
 
 **Condition types implemented:** `time_range`, `day_of_week`, `calendar_entity`, and (since 1.2) `solar_angle`. All condition types support the `negate` flag. `duration` and `relative_to_event` are v2 and fail closed.
@@ -945,10 +970,26 @@ def get_entity_area(entity_id: str) -> Optional[str]:
 def get_entity_domain(entity_id: str) -> str:
     return entity_id.split(".")[0]
 
+def get_entity_device(entity_id: str) -> Optional[str]:
+    # entity registry entry -> device_id; None for entities owning no device
+    ...
+
+def get_entity_integration(entity_id: str) -> Optional[str]:
+    # entity registry entry -> config entry -> integration domain
+    ...
+
 resolver = InheritanceResolver(
     store=store,
     get_entity_area=get_entity_area,
-    get_entity_domain=get_entity_domain
+    get_entity_domain=get_entity_domain,
+    # Supply both, or the levels they resolve are inert: device-scope profiles
+    # apply to nothing without get_entity_device, and without
+    # get_entity_integration only integrations whose name equals an entity
+    # domain resolve, leaving hub and device integration sidecars unused
+    # (Specification 5.6). Both are also required by query(devices=...) and
+    # query(integrations=...), which raise ValueError when they are absent.
+    get_entity_device=get_entity_device,
+    get_entity_integration=get_entity_integration
 )
 
 # Initialise enforcer
@@ -962,9 +1003,35 @@ lease_manager = LeaseManager(store)
 # Caller context function (host server provides this). mesa-core applies
 # access_roles before surfacing any profile, so without this the base privacy
 # level applies to every caller equally (Spec 7.2).
+#
+# Authenticating the request is YOUR job, not mesa-core's: Specification 9.1
+# requires Level 3 servers to reject unauthenticated requests with
+# HA-equivalent authentication, and mesa-core never sees your transport. Gate
+# the connection first and derive the context from the authenticated session;
+# a server that always returns an anonymous context is conformant only for
+# base privacy levels and gives access_roles nothing to isolate (Spec 3,
+# caller identity realism).
 def get_caller_context() -> CallerContext:
-    # Extract from current MCP session
-    ...
+    session = current_session()          # your transport's authenticated session
+    if session is None or not session.is_authenticated:
+        raise PermissionError("unauthenticated MCP request")
+    return CallerContext(
+        caller_id=session.user_id,
+        roles=session.roles,
+        is_authenticated=True,
+        session_id=session.id,
+    )
+
+# Deployment facts the Spec 5.5 invalidation triggers are evaluated against.
+# Without this, integration_version / ha_version / invalidated_by_entities
+# cannot be evaluated and an invalidated profile keeps reporting
+# staleness_status: current (Spec 5.4). review_after_days needs nothing.
+def get_validity_context() -> dict:
+    return {
+        "known_entity_ids": hass_entity_ids(),      # your cached entity registry
+        "integration_version": installed_version(),
+        "ha_version": hass_version(),
+    }
 
 # Register all MESA tools
 register_mesa_tools(
@@ -973,7 +1040,8 @@ register_mesa_tools(
     server=app,
     enforcer=enforcer,
     lease_manager=lease_manager,
-    caller_context_fn=get_caller_context
+    caller_context_fn=get_caller_context,
+    get_validity_context=get_validity_context
 )
 
 # Wrap your service call handler with MESA enforcement
@@ -1007,12 +1075,19 @@ mesa-core provides adapters for the two most common MCP Python frameworks.
 from mesa_core.mcp.adapters import ToolRegistry
 
 class MyFrameworkRegistry:
-    def register_tool(self, name: str, handler: Callable, schema: dict) -> None:
+    def register_tool(
+        self, name: str, handler: ToolHandler, schema: dict, description: str
+    ) -> None:
         # register into your framework's tool system
         ...
 
 register_mesa_tools(store=store, adapter=MyFrameworkRegistry(), server=app)
 ```
+
+All four parameters are required: `register_mesa_tools` passes the tool's
+description positionally alongside its schema, so a `register_tool` accepting
+only three raises `TypeError`. `handler` is a `ToolHandler`, an async callable
+taking the parsed parameter dict and returning the response dict.
 
 ---
 
@@ -1032,6 +1107,7 @@ mesa-core never talks to Home Assistant. Every piece of HA registry or state kno
 | `expand_target` | `TriggerValidator`, `entities_by_role` | Indirect references (device triggers, purpose-specific trigger target selectors) are invisible; a stale `none` declaration behind them passes unflagged. |
 | `caller_context_fn` | `register_mesa_tools` | Tools respond as an anonymous, role-less caller; lease session scoping degrades. |
 | `get_semantic_moments` | `register_mesa_tools` / `MesaToolHandlers` | `mesa_get_profile` never includes the `semantic_moments` block; agents fall back to profile-declared automation semantics. |
+| `get_validity_context` | `register_mesa_tools` / `MesaToolHandlers` | The `profile_valid_for` registry and version triggers cannot be evaluated, so an invalidated profile keeps reporting `staleness_status: current` and no invalidation warning is surfaced (Specification 5.4, 5.5). `review_after_days` is evaluated either way. |
 | `on_lease_event` | `LeaseManager` | `mesa_lease_expired` events are not bridged to the HA event bus. |
 
 ---
@@ -1136,6 +1212,8 @@ mesa-core 1.x implements the MESA Specification at Levels 1 and 2 in full and at
 **Solar-angle temporal conditions.** The `solar_angle` condition type evaluates through the `get_solar_elevation` host callback: each `solar_event` is an elevation-boundary crossing, and `solar_offset_minutes` shifts the transition by sampling the elevation in the past. No astronomy dependency; without the callback the condition stays fail-closed as in 1.1. See Section 4.7.
 
 **Semantic moments (HA 2026.7+ purpose-specific triggers).** `mesa_get_profile` accepts `include_semantic_moments` and, when the host supplies the `get_semantic_moments` callback, returns the purpose-specific triggers and conditions the entity participates in. Consumed live from HA at request time, never stored in profiles (so it cannot go stale), never consulted by enforcement, and documented as carrying no MESA authority.
+
+The callback returns `list[dict]`, one entry per moment, each carrying at least a string `id`; entries without one are dropped. This is not the shape Home Assistant hands you. The WebSocket registry operations return the triggers and the conditions an entity participates in as separate arrays of identifiers, so the host writes the adapter: fetch both, tag each identifier with which kind it came from, and emit the merged list. For example, `[{"id": t, "kind": "trigger"} for t in triggers] + [{"id": c, "kind": "condition"} for c in conditions]`. mesa-core deliberately does not do this itself, because the operation names and payload shapes are HA version territory and would date the library.
 
 ### Added in Version 1.3
 

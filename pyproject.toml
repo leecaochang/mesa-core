@@ -41,8 +41,8 @@ dependencies = []
 [project.optional-dependencies]
 fastmcp = ["fastmcp"]
 mcp = ["mcp"]
-test = ["pytest>=8", "jsonschema>=4"]
-dev = ["ruff>=0.6", "mypy>=1.11", "pytest>=8", "jsonschema>=4"]
+test = ["pytest>=8", "jsonschema>=4", "pyyaml>=6"]
+dev = ["ruff>=0.6", "mypy>=1.11", "pytest>=8", "jsonschema>=4", "pyyaml>=6"]
 
 [project.urls]
 Homepage = "https://github.com/sfox38/mesa-core"

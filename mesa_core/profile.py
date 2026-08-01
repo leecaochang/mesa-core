@@ -392,10 +392,38 @@ class SemanticProfile:
             return self.metadata.confidence
         return 1.0 if self.is_trusted() else 0.0
 
-    def staleness_status(self, now: datetime | None = None) -> str:
-        """``current`` / ``stale`` / ``unknown`` (Spec 5.4). Trusted profiles do not decay."""
+    def staleness_status(
+        self,
+        now: datetime | None = None,
+        *,
+        known_entity_ids: Iterable[str] | None = None,
+        integration_version: str | None = None,
+        ha_version: str | None = None,
+    ) -> str:
+        """``current`` / ``stale`` / ``unknown`` (Spec 5.4). Trusted profiles do not decay.
+
+        Spec 5.4 defines ``stale`` as age exceeding ``staleness_window_days``
+        **or** an invalidation trigger having fired, so the ``profile_valid_for``
+        triggers of Spec 5.5 are evaluated here as well. ``review_after_days``
+        needs no host input; the registry and version triggers are evaluated
+        only when the host supplies the matching argument, exactly as in
+        :meth:`validity_warnings`. A fired trigger is definite evidence of
+        staleness, so it outranks ``unknown``; a trigger that cannot be
+        evaluated leaves the status alone and is surfaced as a warning instead.
+        """
         if not self.is_inferred():
             return "current"
+        fired = any(
+            fired
+            for fired, _ in self._validity_findings(
+                now=now,
+                known_entity_ids=known_entity_ids,
+                integration_version=integration_version,
+                ha_version=ha_version,
+            )
+        )
+        if fired:
+            return "stale"
         if not self.metadata.generated_at:
             return "unknown"
         try:
@@ -432,12 +460,39 @@ class SemanticProfile:
         ordering guess would be dishonest. Advisory only: a fired trigger
         flags the profile for review and never discards it. Typically called
         on the effective profile, whose ``profile_valid_for`` has been merged
-        per subfield across the inheritance layers.
+        per subfield across the inheritance layers. Applies to profiles of
+        every origin, unlike ``staleness_status``, which Spec 5.4 scopes to
+        inferred profiles.
+        """
+        return [
+            message
+            for _, message in self._validity_findings(
+                now=now,
+                known_entity_ids=known_entity_ids,
+                integration_version=integration_version,
+                ha_version=ha_version,
+            )
+        ]
+
+    def _validity_findings(
+        self,
+        *,
+        now: datetime | None = None,
+        known_entity_ids: Iterable[str] | None = None,
+        integration_version: str | None = None,
+        ha_version: str | None = None,
+    ) -> list[tuple[bool, str]]:
+        """``(fired, message)`` for each profile_valid_for finding.
+
+        ``fired`` separates a trigger that actually fired, which makes an
+        inferred profile stale (Spec 5.4), from one that could not be
+        evaluated, which is reported but leaves the status alone. Shared by
+        ``staleness_status`` and ``validity_warnings`` so the two cannot drift.
         """
         pvf = self.metadata.profile_valid_for
         if not isinstance(pvf, dict):
             return []
-        warnings: list[str] = []
+        warnings: list[tuple[bool, str]] = []
         prefix = f"{self.entity_id}: "
 
         days = pvf.get("review_after_days")
@@ -451,11 +506,15 @@ class SemanticProfile:
                     anchor = None
             if anchor is None:
                 # Unevaluable is surfaced, never silent: the operator declared
-                # a review window that nothing anchors.
+                # a review window that nothing anchors. It has not fired, so it
+                # does not make the profile stale.
                 warnings.append(
-                    prefix + "review_after_days is declared but cannot be evaluated: "
-                    "neither last_updated nor metadata_origin.generated_at provides "
-                    "a parseable anchor timestamp"
+                    (
+                        False,
+                        prefix + "review_after_days is declared but cannot be evaluated: "
+                        "neither last_updated nor metadata_origin.generated_at provides "
+                        "a parseable anchor timestamp",
+                    )
                 )
             else:
                 current = now or datetime.now(tz=anchor.tzinfo)
@@ -467,8 +526,11 @@ class SemanticProfile:
                 # Seconds, not timedelta(days=...): exact and cannot overflow.
                 if (current - anchor).total_seconds() > days * 86400:
                     warnings.append(
-                        prefix + f"profile is due for review: review_after_days ({days}) "
-                        f"has elapsed since {anchor_raw}"
+                        (
+                            True,
+                            prefix + f"profile is due for review: review_after_days ({days}) "
+                            f"has elapsed since {anchor_raw}",
+                        )
                     )
 
         if known_entity_ids is not None:
@@ -478,8 +540,11 @@ class SemanticProfile:
                 for ref in declared:
                     if isinstance(ref, str) and ref not in known:
                         warnings.append(
-                            prefix + f"invalidated: entity {ref} named in "
-                            "invalidated_by_entities is no longer in the registry"
+                            (
+                                True,
+                                prefix + f"invalidated: entity {ref} named in "
+                                "invalidated_by_entities is no longer in the registry",
+                            )
                         )
 
         for key, current_version in (
@@ -491,8 +556,11 @@ class SemanticProfile:
             declared_version = pvf.get(key)
             if isinstance(declared_version, str) and declared_version != current_version:
                 warnings.append(
-                    prefix + f"{key} mismatch: profile authored against "
-                    f"{declared_version}, current is {current_version}"
+                    (
+                        True,
+                        prefix + f"{key} mismatch: profile authored against "
+                        f"{declared_version}, current is {current_version}",
+                    )
                 )
         return warnings
 

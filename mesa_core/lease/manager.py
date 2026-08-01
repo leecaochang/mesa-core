@@ -2,9 +2,15 @@
 
 The lease protocol is an advisory signal between MESA-aware components, not a
 concurrency lock (Section 21.1). mesa-core owns no event loop, so automatic
-expiry is lazy: every operation ignores and sweeps expired leases, and hosts
-SHOULD call ``expire()`` periodically for timely ``mesa_lease_expired``
-events. Events are delivered through the ``on_lease_event`` callback with the
+expiry is lazy: an expired lease never grants anything, but it is removed, and
+its ``mesa_lease_expired`` event emitted, only when a lifecycle operation
+sweeps. ``request``, ``release``, ``release_session``, ``expire``, and
+``sensor_state`` sweep; ``active_leases`` filters expired entries out of its
+result without removing them or emitting, so it stays a side-effect-free read.
+Hosts SHOULD therefore call ``expire()`` periodically for timely events rather
+than relying on reads to produce them, and MUST call ``release_session()`` when
+a session disconnects, since nothing else releases a session's holds early.
+Events are delivered through the ``on_lease_event`` callback with the
 Section 21.4 payload (``lease_id``, ``entities``, ``reason``, ``timestamp``);
 the host bridges them onto the HA event bus.
 

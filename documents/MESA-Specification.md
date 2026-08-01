@@ -97,7 +97,7 @@ MESA metadata describes the environment. Agents are probabilistic reasoning syst
 
 MESA defines three conformance levels. These levels describe capability tiers that any MCP server can reach by integrating the mesa-core Python module. A host server MUST declare which level it targets.
 
-**Reference implementation.** The mesa-core Python module is the reference implementation of this specification. mesa-core v1.2 implements Levels 1 and 2 in full and Level 3 including the retrieval tools, enforcement, the confirmation protocol, and the lease coordination tools (single-agent scope; multi-agent priority preemption per Section 21.6 follows in a later version). MCP server developers integrate mesa-core to gain MESA conformance without reimplementing the specification from scratch. See the mesa-core Module Proposal document for integration details.
+**Reference implementation.** The mesa-core Python module is the reference implementation of this specification. mesa-core v1.3 implements Levels 1 and 2 in full and Level 3 including the retrieval tools, enforcement, the confirmation protocol, and the lease coordination tools (single-agent scope; multi-agent priority preemption per Section 21.6 follows in a later version). MCP server developers integrate mesa-core to gain MESA conformance without reimplementing the specification from scratch. See the mesa-core Module Proposal document for integration details.
 
 **Who conformance applies to.** Conformance levels are declared by host implementations: MCP servers and the libraries they embed. Some requirements in this specification address consuming agents rather than hosts: epistemic weighting, cascade caution, refusal communication. These are normative guidance for agent developers, but they describe probabilistic reasoning behaviour that no test suite can verify. The conformance test suite verifies host behaviour only; requirements addressed to agents are identifiable by their agent-directed language ("Agents MUST...").
 
@@ -978,6 +978,8 @@ All endpoints MUST require authentication equivalent to HA's API authentication.
 
 All filter fields are optional and combinable. An empty query returns all available profiles subject to pagination.
 
+**What "available" covers.** Query results are entity-keyed and enumerate the entities that carry a profile of their own. An entity covered only by a broader profile (domain, integration, area, or device) or by `deployment_defaults` has a fully resolved effective profile and is retrievable by exact ID through `mesa_get_profile`, but does not appear as a query row, because enumerating it would require the deployment's entity registry rather than the profile store. Hosts that want registry-wide coverage enumerate their own entities and retrieve each by ID.
+
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `domains` | `array<string>` | - | Filter by HA domain. |
@@ -1031,8 +1033,9 @@ All filter fields are optional and combinable. An empty query returns all availa
 |---|---|---|
 | `entity_id` | Yes | HA entity ID or component identifier. |
 | `component_type` | Yes | `entity`, `automation`, `scene`, `helper`, `zone`, `person`. Results are always entity-keyed: scoped profiles (domain, integration, area, device) surface through inheritance resolution and `mesa_explain_profile`, never as query rows, so no scoped component type is emitted. The value is derived from the entity ID's domain. |
-| `staleness_status` | Yes for `inferred_ai` | `current`, `stale`, or `unknown`. |
+| `staleness_status` | Yes for `inferred_ai` | `current`, `stale`, or `unknown`. Reflects age and fired invalidation triggers (Section 5.4). |
 | `semantic_profile` | Yes | Profile object, filtered by `include_fields`. |
+| `privacy_classification` | Yes | The resolved classification. Always present, and never filtered by `include_fields`, for the same reason as `metadata_origin`: an agent cannot reason safely about a result whose sensitivity it cannot see. |
 | `diagnostic_profile` | No | Included when available and `diagnostic_profile` in `include_fields`. |
 
 ### 9.4 Caller Context Schema

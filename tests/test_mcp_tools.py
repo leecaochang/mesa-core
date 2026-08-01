@@ -467,3 +467,138 @@ def test_component_type_derived_from_domain() -> None:
         store.set(entity_id, make_profile(entity_id))
         got = call(registry, "mesa_get_profile", entity_id=entity_id)
         assert got["component_type"] == expected, entity_id
+
+
+# --------- freshness invalidation reaches the wire (Spec 5.4/5.5, audit 11 F1)
+
+
+def _inferred_pinned(entity_id: str) -> SemanticProfile:
+    return SemanticProfile.from_dict(
+        entity_id,
+        {
+            "semantic_profile": {
+                "metadata_origin": {
+                    "source": "inferred_ai",
+                    "confidence": 0.9,
+                    "generated_at": "2026-07-30T00:00:00+00:00",
+                },
+                "profile_valid_for": {"integration_version": "2.4.1"},
+            }
+        },
+    )
+
+
+def test_version_invalidated_profile_reports_stale_over_mcp() -> None:
+    store = ProfileStore(backend=MemoryBackend())
+    store.set("light.pinned", _inferred_pinned("light.pinned"))
+
+    # Without the host context the pin cannot be evaluated: current, as before.
+    registry, _ = make_registry(store)
+    out = call(registry, "mesa_get_profile", entity_id="light.pinned")
+    assert out["staleness_status"] == "current"
+    assert "warnings" not in out
+
+    # With it, the fired trigger reaches the wire (Spec 5.4) and is surfaced
+    # as a warning (Spec 5.5).
+    registry = DictToolRegistry()
+    register_mesa_tools(
+        store, adapter=registry, get_validity_context=lambda: {"integration_version": "2.5.0"}
+    )
+    out = call(registry, "mesa_get_profile", entity_id="light.pinned")
+    assert out["staleness_status"] == "stale"
+    assert any("integration_version mismatch" in w for w in out["warnings"])
+
+
+def test_query_surfaces_validity_warnings_in_the_envelope() -> None:
+    store = ProfileStore(backend=MemoryBackend())
+    store.set("light.pinned", _inferred_pinned("light.pinned"))
+    registry = DictToolRegistry()
+    register_mesa_tools(
+        store, adapter=registry, get_validity_context=lambda: {"integration_version": "2.5.0"}
+    )
+    out = call(registry, "mesa_query_profiles", include_inferred=True)
+    assert out["results"][0]["staleness_status"] == "stale"
+    assert any("integration_version mismatch" in w for w in out["warnings"])
+
+
+def test_inherited_version_pin_invalidates_the_entities_that_inherit_it() -> None:
+    # The pin is declared by the integration sidecar; the entity inherits it
+    # through profile_valid_for resolution, so it must invalidate too.
+    store = ProfileStore(backend=MemoryBackend(), get_entity_integration=lambda eid: "hue")
+    store.set_integration_profile(
+        "hue",
+        SemanticProfile.from_dict(
+            "hue",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {"source": "developer"},
+                    "profile_valid_for": {"integration_version": "2.4.1"},
+                }
+            },
+        ),
+    )
+    store.set(
+        "light.a",
+        SemanticProfile.from_dict(
+            "light.a",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {
+                        "source": "inferred_ai",
+                        "confidence": 0.9,
+                        "generated_at": "2026-07-30T00:00:00+00:00",
+                    }
+                }
+            },
+        ),
+    )
+    registry = DictToolRegistry()
+    register_mesa_tools(
+        store, adapter=registry, get_validity_context=lambda: {"integration_version": "2.5.0"}
+    )
+    out = call(registry, "mesa_get_profile", entity_id="light.a")
+    assert out["staleness_status"] == "stale"
+
+
+def test_validity_warnings_surface_for_trusted_profiles_too() -> None:
+    # Spec 5.5 applies to every origin; staleness_status stays inferred-only.
+    store = ProfileStore(backend=MemoryBackend())
+    store.set(
+        "light.user",
+        SemanticProfile.from_dict(
+            "light.user",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {"source": "user"},
+                    "profile_valid_for": {"invalidated_by_entities": ["light.gone"]},
+                }
+            },
+        ),
+    )
+    registry = DictToolRegistry()
+    register_mesa_tools(
+        store, adapter=registry, get_validity_context=lambda: {"known_entity_ids": ["light.user"]}
+    )
+    out = call(registry, "mesa_get_profile", entity_id="light.user")
+    assert "staleness_status" not in out
+    assert any("light.gone" in w for w in out["warnings"])
+
+
+def test_raising_validity_context_degrades_instead_of_failing_the_request() -> None:
+    store = ProfileStore(backend=MemoryBackend())
+    store.set("light.pinned", _inferred_pinned("light.pinned"))
+    registry = DictToolRegistry()
+
+    def boom() -> dict[str, Any]:
+        raise RuntimeError("registry unavailable")
+
+    register_mesa_tools(store, adapter=registry, get_validity_context=boom)
+    out = call(registry, "mesa_get_profile", entity_id="light.pinned")
+    assert out["entity_id"] == "light.pinned"
+    assert out["staleness_status"] == "current"
+    # A non-dict return is ignored the same way.
+    registry2 = DictToolRegistry()
+    register_mesa_tools(store, adapter=registry2, get_validity_context=lambda: "nope")
+    assert call(registry2, "mesa_get_profile", entity_id="light.pinned")["staleness_status"] == (
+        "current"
+    )

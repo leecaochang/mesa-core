@@ -166,8 +166,10 @@ This is the highest-leverage path. When you integrate mesa-core into your MCP se
 **Step 1: Install mesa-core.**
 
 ```bash
-pip install mesa-core
+pip install 'mesa-core[fastmcp]'
 ```
+
+The MCP framework is an optional dependency, so install the extra matching your server: `mesa-core[fastmcp]` for the FastMCP path shown below (the default adapter), or `mesa-core[mcp]` if you use the raw MCP Python SDK with `adapter="raw_sdk"`. Plain `pip install mesa-core` gives you the library without either framework, which is what you want when you are only storing and resolving profiles.
 
 **Step 2: Register MESA tools into your server.**
 
@@ -985,10 +987,12 @@ privacy_classification:
   level: restricted
   contains_visual_capture: true
   contains_audio_capture: true
-  deny_response_mode: silent
+  deny_response_mode: omit
 ```
 
-Every entity the camera owns now resolves `restricted` privacy and `confirm` control, including any entity a future firmware update adds. Asking the server to explain any of them (`mesa_explain_profile`) shows `provided_by_level: device` for these fields. The nursery thermostat, in the same area but a different device, is unaffected. If one entity of the device needs a different rule, an entity-level profile on it still wins over the device profile.
+Every entity the camera owns now resolves `restricted` privacy and `confirm` control, including any entity a future firmware update adds. Asking the server to explain any of them (`mesa_explain_profile`) shows `provided_by_level: device` for these fields. The nursery thermostat, in the same area but a different device, is unaffected.
+
+If one entity of the device needs different treatment, an entity-level profile on it is more specific and wins wherever the resolution rules allow one value to replace another. That is not everywhere: privacy is most-restrictive-wins, so an entity profile declaring `normal` does not undo the device's `restricted`, and an inherited `confirm` can only be loosened through the entity-scope operator override (`override_control_mode: true` with a `control_reason`). Specificity decides which value is chosen; the safety rules decide whether a looser value is allowed at all.
 
 ---
 
@@ -1157,7 +1161,7 @@ for issue in issues:
 - `control_mode: confirm` or `prohibited` without a `control_reason`
 - person entities without a privacy classification
 - `triggers_automations: none` declared on helper entities
-- overly long `true_meaning` / `false_meaning` prose
+- overly long `semantic_meaning` prose, which costs agent context on every retrieval
 - missing `metadata_origin`
 - orphaned profiles (stored keys absent from your entity list)
 - automation cross-checks against declared `triggers_automations: none`, resolved through profile inheritance as of mesa-lint 0.2
@@ -1210,4 +1214,4 @@ When an agent is blocked from acting, it needs to communicate a reason to the us
 
 `none` is a positive assertion. Once declared, it tells every agent in every session that this entity is safe to act on without cascade caution. If you later add an automation that uses this entity as a trigger or condition, the declaration is now wrong. Use mesa-core's `TriggerValidator` to catch this automatically. Run it at startup and when automations change. If you cannot run validation, use `unknown` instead of `none` unless you are certain.
 
-*MESA - Metadata and Environment Semantics for Agents. Version 1.0. Getting Started Guide. Discussion and contributions are welcome via GitHub Issues.*
+*MESA - Metadata and Environment Semantics for Agents. Version 1.1. Getting Started Guide. Discussion and contributions are welcome via GitHub Issues.*

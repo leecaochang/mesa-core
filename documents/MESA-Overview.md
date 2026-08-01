@@ -126,7 +126,7 @@ None of these are required. All of them are useful. You add them when you have t
 
 **Serious integration developers.** Add full profiles including diagnostic semantics, event semantics, and resource characteristics. Provide the information that no one else can: what your custom states mean, what your error classes indicate, and what makes your integration distinctive.
 
-**MCP server developers.** Add MESA to your existing server by integrating mesa-core, the reference Python module that implements the MESA specification. Three lines of code registers all MESA tools and enforcement into your server. Your users get MESA without switching servers.
+**MCP server developers.** Add MESA to your existing server by integrating mesa-core, the reference Python module that implements the MESA specification. Three lines of code register all the MESA retrieval tools into your server. Enforcement is a separate step: it lives on your service-call path, where you ask the enforcer whether an action is permitted before executing it, because only your server sees the calls agents make. Your users get MESA without switching servers.
 
 ---
 

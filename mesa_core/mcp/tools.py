@@ -137,6 +137,7 @@ class MesaToolHandlers:
         lease_manager: LeaseManager | None = None,
         get_semantic_moments: Callable[[str], list[dict[str, Any]] | None] | None = None,
         privacy_enforcer: PrivacyEnforcer | None = None,
+        get_validity_context: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self.store = store
         self.resolver = resolver or InheritanceResolver(store=store)
@@ -144,6 +145,7 @@ class MesaToolHandlers:
         self.lease_manager = lease_manager
         self.get_semantic_moments = get_semantic_moments
         self.privacy = privacy_enforcer or PrivacyEnforcer()
+        self.get_validity_context = get_validity_context
 
     def _semantic_moments(self, entity_id: str) -> list[dict[str, Any]] | None:
         """Live HA purpose-specific trigger vocabulary for one entity (Spec 9.5).
@@ -169,6 +171,29 @@ class MesaToolHandlers:
         ]
 
     # -- helpers ---------------------------------------------------------------
+
+    _VALIDITY_KEYS = ("known_entity_ids", "integration_version", "ha_version")
+
+    def _validity_context(self) -> dict[str, Any]:
+        """Host deployment context for the Spec 5.5 invalidation triggers.
+
+        ``review_after_days`` needs nothing from the host, but the registry and
+        version pins can only be evaluated against data mesa-core never sees, so
+        without this callback those triggers stay unevaluated and an
+        invalidated profile keeps reporting ``current`` (Spec 5.4). Unknown
+        keys are ignored and a raising callback degrades to no context rather
+        than failing the request.
+        """
+        if self.get_validity_context is None:
+            return {}
+        try:
+            context = self.get_validity_context()
+        except Exception:
+            logger.exception("get_validity_context failed")
+            return {}
+        if not isinstance(context, dict):
+            return {}
+        return {key: context[key] for key in self._VALIDITY_KEYS if key in context}
 
     def _caller_context(self) -> CallerContext | None:
         if self.caller_context_fn is None:
@@ -217,6 +242,7 @@ class MesaToolHandlers:
         stored: SemanticProfile,
         effective: SemanticProfile,
         include_fields: list[str] | None,
+        validity_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         doc = effective.to_dict()
         sp = doc.get("semantic_profile", {})
@@ -232,7 +258,10 @@ class MesaToolHandlers:
             "privacy_classification": doc.get("privacy_classification"),
         }
         if stored.is_inferred():
-            out["staleness_status"] = stored.staleness_status()
+            # Evaluated on the effective profile: its profile_valid_for is the
+            # merge across layers, so a version pin declared by an integration
+            # sidecar invalidates the entities that inherit it (Spec 5.4, 5.5).
+            out["staleness_status"] = effective.staleness_status(**(validity_context or {}))
         if (
             include_fields
             and "diagnostic_profile" in include_fields
@@ -268,6 +297,8 @@ class MesaToolHandlers:
                 resolver=self.resolver,
             )
             include_fields = params.get("include_fields")
+            validity_context = self._validity_context()
+            validity_warnings: list[str] = []
             results: list[dict[str, Any]] = []
             for row in result.rows:
                 effective = row.effective or row.stored
@@ -277,8 +308,13 @@ class MesaToolHandlers:
                     if denied is not None:
                         results.append(denied)
                     continue
+                # Spec 5.5: a host SHOULD surface a warning when an
+                # invalidation trigger fires, for profiles of any origin.
+                validity_warnings.extend(effective.validity_warnings(**validity_context))
                 results.append(
-                    self._result_object(row.entity_id, row.stored, effective, include_fields)
+                    self._result_object(
+                        row.entity_id, row.stored, effective, include_fields, validity_context
+                    )
                 )
             response: dict[str, Any] = {
                 "mesa_version": MESA_VERSION,
@@ -294,8 +330,8 @@ class MesaToolHandlers:
             caller = self._caller_context()
             if caller is not None:
                 response["caller_context"] = caller.to_dict()
-            if result.warnings:
-                response["warnings"] = result.warnings
+            if result.warnings or validity_warnings:
+                response["warnings"] = [*result.warnings, *validity_warnings]
             return response
         except InvalidCursorError as err:
             return _error("invalid_cursor", str(err))
@@ -337,8 +373,14 @@ class MesaToolHandlers:
             }
             if include_diagnostic and effective.diagnostic_profile is not None:
                 out["diagnostic_profile"] = effective.diagnostic_profile
+            validity_context = self._validity_context()
             if stored is not None and stored.is_inferred():
-                out["staleness_status"] = stored.staleness_status()
+                out["staleness_status"] = effective.staleness_status(**validity_context)
+            # Spec 5.5: surface a warning when an invalidation trigger fires.
+            # Applies to every origin, not only inferred profiles.
+            validity_warnings = effective.validity_warnings(**validity_context)
+            if validity_warnings:
+                out["warnings"] = validity_warnings
             if params.get("include_semantic_moments", False):
                 moments = self._semantic_moments(entity_id)
                 if moments is not None:
@@ -469,11 +511,19 @@ def register_mesa_tools(
     lease_manager: LeaseManager | None = None,
     caller_context_fn: Callable[[], CallerContext] | None = None,
     get_semantic_moments: Callable[[str], list[dict[str, Any]] | None] | None = None,
+    get_validity_context: Callable[[], dict[str, Any]] | None = None,
 ) -> ToolRegistry:
     """Register all MESA MCP tools into the host server's tool registry.
 
     ``adapter`` is "fastmcp", "raw_sdk", or any object implementing the
     ToolRegistry protocol. Returns the registry used.
+
+    ``get_validity_context`` supplies the deployment facts the Spec 5.5
+    invalidation triggers are evaluated against, as a dict with any of
+    ``known_entity_ids``, ``integration_version``, and ``ha_version``. Without
+    it those triggers cannot be evaluated and a version-invalidated or
+    entity-invalidated profile keeps reporting ``staleness_status: current``
+    (Spec 5.4); ``review_after_days`` is evaluated either way.
 
     When ``lease_manager`` is provided, the lease coordination tools
     (mesa_request_lease, mesa_release_lease) are registered as well; omitted,
@@ -505,6 +555,7 @@ def register_mesa_tools(
         caller_context_fn=caller_context_fn,
         lease_manager=lease_manager,
         get_semantic_moments=get_semantic_moments,
+        get_validity_context=get_validity_context,
     )
     tools = [
         ("mesa_query_profiles", handlers.mesa_query_profiles),
