@@ -175,3 +175,40 @@ def test_validate_entity_single_path() -> None:
     assert len(issues) == 1
     assert issues[0].entity_id == "input_boolean.guest_mode"
     assert validator.validate_entity("light.unrelated", lambda: AUTOMATIONS) == []
+
+
+def test_configs_walked_once_not_per_entity() -> None:
+    # The config walk (and its expand_target registry calls) must run once per
+    # config, not once per declared-none entity per config: with N entities and
+    # M configs the old shape ran N x M expansions.
+    calls: list[tuple[str, str]] = []
+
+    def expand(kind: str, ref: str) -> list[str]:
+        calls.append((kind, ref))
+        return []
+
+    configs: list[dict[str, Any]] = [
+        {"id": "automation.a", "trigger": [{"platform": "device", "device_id": "dev1"}]},
+        {"id": "automation.b", "trigger": [{"platform": "device", "device_id": "dev2"}]},
+    ]
+    validator = TriggerValidator(
+        store=store_with_none("light.one", "light.two", "light.three"),
+        expand_target=expand,
+    )
+    issues = validator.validate(lambda: configs)
+    assert issues == []
+    # One expansion per selector: 2 configs x 1 selector, regardless of the
+    # three declared-none entities.
+    assert sorted(calls) == [("device_id", "dev1"), ("device_id", "dev2")]
+
+
+def test_hoisted_walk_output_unchanged() -> None:
+    # Same issues as before the hoist, ordering included.
+    validator = TriggerValidator(
+        store=store_with_none("input_boolean.guest_mode", "binary_sensor.occupied")
+    )
+    issues = validator.validate(lambda: AUTOMATIONS)
+    assert [(i.entity_id, i.automation_id, i.role, i.severity) for i in issues] == [
+        ("binary_sensor.occupied", "automation.occupancy_lights", "condition", "warning"),
+        ("input_boolean.guest_mode", "automation.occupancy_lights", "trigger", "error"),
+    ]

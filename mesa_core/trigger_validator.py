@@ -117,7 +117,7 @@ class TriggerValidator:
         """Whether an entity reads as ``triggers_automations: none`` to an agent.
 
         Resolved, not stored: agents consume the effective profile, so a `none`
-        inherited from a domain, integration, or area profile, or from
+        inherited from a domain, integration, area, or device profile, or from
         deployment defaults, skips cascade caution exactly as an entity-level
         one does and is just as stale if the entity is in fact a trigger.
         """
@@ -140,13 +140,25 @@ class TriggerValidator:
         candidates = list(entity_ids) if entity_ids is not None else self.store.entity_keys()
         return [key for key in candidates if self._is_none(key)]
 
+    def _walked_configs(
+        self, configs: list[dict[str, Any]]
+    ) -> list[tuple[str, dict[str, set[str]]]]:
+        """Walk each config (and expand its target selectors) exactly once.
+
+        The walk and the ``expand_target`` registry calls are per config, not
+        per entity-config pair: with hundreds of ``none`` declarations the
+        re-expansion dominated ``validate()``.
+        """
+        return [
+            (str(config.get("id", "<unknown>")), entities_by_role(config, self.expand_target))
+            for config in configs
+        ]
+
     def _issues_for(
-        self, entity_id: str, configs: list[dict[str, Any]]
+        self, entity_id: str, walked: list[tuple[str, dict[str, set[str]]]]
     ) -> list[ValidationIssue]:
         issues: list[ValidationIssue] = []
-        for config in configs:
-            automation_id = str(config.get("id", "<unknown>"))
-            by_role = entities_by_role(config, self.expand_target)
+        for automation_id, by_role in walked:
             # Only trigger and condition references invalidate a none declaration
             # (Spec 5.5): an entity written by an action does not trigger automations.
             for role, severity in (("trigger", "error"), ("condition", "warning")):
@@ -182,10 +194,10 @@ class TriggerValidator:
         profile without carrying one of its own is not in the store's key set,
         so it can only be checked when the host names it.
         """
-        configs = get_automation_configs()
+        walked = self._walked_configs(get_automation_configs())
         issues: list[ValidationIssue] = []
         for entity_id in self._declared_none_entities(entity_ids):
-            issues.extend(self._issues_for(entity_id, configs))
+            issues.extend(self._issues_for(entity_id, walked))
         return issues
 
     def validate_entity(
@@ -196,7 +208,7 @@ class TriggerValidator:
         """Validate a single entity against the automation registry."""
         if not self._is_none(entity_id):
             return []
-        return self._issues_for(entity_id, get_automation_configs())
+        return self._issues_for(entity_id, self._walked_configs(get_automation_configs()))
 
     async def avalidate(
         self,

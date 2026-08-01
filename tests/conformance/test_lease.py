@@ -270,3 +270,91 @@ def test_sensor_state_reflects_active_leases() -> None:
     after = manager.sensor_state(NOW + timedelta(seconds=31))
     assert after["state"] == "off"
     assert after["last_lease_holder"] == "agent.b"  # audit context survives expiry
+
+
+# --------------------------- fail-closed Section 11 parsing (mesa-core 1.3)
+
+
+def test_default_clock_is_timezone_aware() -> None:
+    manager = LeaseManager()
+    response = manager.request(["light.x"], 5, session_id="s1")
+    assert datetime.fromisoformat(response.expires_at).tzinfo is not None
+    assert manager.sensor_state()["state"] == "on"
+
+
+def test_malformed_priority_object_fails_closed() -> None:
+    # cooperative_priority as a string previously crashed or slipped through;
+    # it must read as protected and (state unavailable, fail-closed) deny.
+    doc: dict[str, Any] = {
+        "semantic_profile": {
+            "metadata_origin": {"source": "user"},
+            "cooperative_priority": "protected",
+            "environmental_dependencies": {"trigger_entities": ["lock.front"]},
+        }
+    }
+    manager = manager_with(SemanticProfile.from_dict("automation.guard", doc))
+    response = manager.request(["lock.front"], 5, session_id="s1", now=NOW)
+    assert not response.granted
+    assert response.entities_denied == ["lock.front"]
+    assert any("not an object" in w and "automation.guard" in w for w in response.warnings)
+
+
+def test_unknown_priority_level_treated_as_protected() -> None:
+    # A typo'd level previously lost the protection entirely (silent grant).
+    manager = manager_with(
+        automation_profile("automation.guard", "protectedd", trigger=["lock.front"])
+    )
+    response = manager.request(["lock.front"], 5, session_id="s1", now=NOW)
+    assert not response.granted
+    assert any("unrecognized cooperative_priority.level" in w for w in response.warnings)
+
+    # Protected is state-checked: with the automation off, the lease grants.
+    manager = manager_with(
+        automation_profile("automation.guard", "protectedd", trigger=["lock.front"]),
+        get_state=lambda eid: "off",
+    )
+    response = manager.request(["lock.front"], 5, session_id="s1", now=NOW)
+    assert response.granted
+    assert any("unrecognized cooperative_priority.level" in w for w in response.warnings)
+
+
+def test_malformed_trigger_entities_fails_closed() -> None:
+    # A wrong-typed entity list previously narrowed the protection scope to
+    # garbage; it must be unevaluable and cover every requested entity.
+    doc: dict[str, Any] = {
+        "semantic_profile": {
+            "metadata_origin": {"source": "user"},
+            "cooperative_priority": {"level": "protected"},
+            "environmental_dependencies": {"trigger_entities": "lock.front"},
+        }
+    }
+    manager = manager_with(SemanticProfile.from_dict("automation.guard", doc))
+    response = manager.request(["light.unrelated"], 5, session_id="s1", now=NOW)
+    assert not response.granted
+    assert any(
+        "trigger_entities" in w and "automation.guard" in w for w in response.warnings
+    )
+
+
+def test_malformed_affected_entities_on_critical_fails_closed() -> None:
+    doc: dict[str, Any] = {
+        "semantic_profile": {
+            "metadata_origin": {"source": "user"},
+            "cooperative_priority": {"level": "critical"},
+            "environmental_dependencies": {},
+            "intent_archetype": {"affected_entities": 5},
+        }
+    }
+    manager = manager_with(SemanticProfile.from_dict("automation.crit", doc))
+    response = manager.request(["light.any"], 5, session_id="s1", now=NOW)
+    assert not response.granted
+    assert response.entities_denied == ["light.any"]
+    assert any("affected_entities" in w for w in response.warnings)
+
+
+def test_deferential_level_is_inert() -> None:
+    manager = manager_with(
+        automation_profile("automation.soft", "deferential", trigger=["light.x"])
+    )
+    response = manager.request(["light.x"], 5, session_id="s1", now=NOW)
+    assert response.granted and response.warnings == []

@@ -31,8 +31,21 @@ class RawSDKRegistry:
         self._tools[name] = (handler, schema, description)
         self._install_once()
 
+    @staticmethod
+    def _unknown_tool(name: str) -> dict[str, Any]:
+        # Spec 9.6 envelope, not a raised KeyError: every other failure path
+        # already answers with an error object.
+        return {
+            "error": "unknown_tool",
+            "message": f"tool {name!r} is not registered",
+            "details": {"tool": name},
+        }
+
     async def dispatch(self, name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
-        handler, _, _ = self._tools[name]
+        entry = self._tools.get(name)
+        if entry is None:
+            return self._unknown_tool(name)
+        handler, _, _ = entry
         return await handler(arguments or {})
 
     def _install_once(self) -> None:
@@ -56,8 +69,12 @@ class RawSDKRegistry:
 
         @self.server.call_tool()  # type: ignore[untyped-decorator]
         async def _call_tool(name: str, arguments: dict[str, Any] | None) -> list[Any]:
-            handler, _, _ = tools[name]
-            result = await handler(arguments or {})
+            entry = tools.get(name)
+            if entry is None:
+                result = self._unknown_tool(name)
+            else:
+                handler, _, _ = entry
+                result = await handler(arguments or {})
             return [types.TextContent(type="text", text=json.dumps(result))]
 
         self._installed = True

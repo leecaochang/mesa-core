@@ -25,3 +25,16 @@ def test_register_into_raw_sdk_server_and_dispatch() -> None:
     }
     result = asyncio.run(registry.dispatch("mesa_get_caller_context", {}))  # type: ignore[attr-defined]
     assert result["is_authenticated"] is False
+
+
+def test_unknown_tool_returns_error_envelope() -> None:
+    # Spec 9.6 envelope, not a raised KeyError (mesa-core 1.3).
+    server = mcp_server.Server("mesa-test")
+    store = ProfileStore(backend=MemoryBackend())
+    registry = register_mesa_tools(store, adapter="raw_sdk", server=server)
+    result = asyncio.run(registry.dispatch("mesa_frobnicate", {}))  # type: ignore[attr-defined]
+    assert result == {
+        "error": "unknown_tool",
+        "message": "tool 'mesa_frobnicate' is not registered",
+        "details": {"tool": "mesa_frobnicate"},
+    }

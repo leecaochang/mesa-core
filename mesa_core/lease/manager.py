@@ -11,6 +11,10 @@ the host bridges them onto the HA event bus.
 Multi-agent priority preemption (Section 21.6) ships in v2. For overlapping
 requests the existing holder takes precedence, which is 21.6 Rule 3, the
 no-priority baseline; ``caller_priority`` is accepted but unused.
+
+Default clocks are timezone-aware UTC. A caller-supplied ``now`` is used
+as-is: inject consistently aware or consistently naive datetimes for one
+manager's lifetime, since lease expiry compares them against each other.
 """
 
 from __future__ import annotations
@@ -21,7 +25,7 @@ import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from mesa_core.audit import MesaAuditEvent, emit_audit_event
@@ -38,6 +42,26 @@ _PREEMPTION_HANDLING = ("rollback_abort", "continue_ignore")
 # Automation cooperative_priority levels that deny leases (Spec 21.5).
 _DENYING_LEVELS = ("protected", "critical")
 _CONFLICT_LEVELS = ("cooperative", "assertive")
+# "deferential" is valid but has no coordination effect (Enrichment 11.2).
+_INERT_LEVELS = ("deferential",)
+
+
+def _entity_set(value: Any, where: str, warnings: list[str]) -> set[str] | None:
+    """Parse an Enrichment Section 11 entity list; None means unevaluable.
+
+    A non-list value, or a list containing non-strings, is malformed as a
+    whole: salvaging the readable items could silently narrow a protection
+    scope, so the field is unevaluable and the caller treats it as covering
+    every requested entity (fail-closed).
+    """
+    if value is None:
+        return set()
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return set(value)
+    warnings.append(
+        f"{where} is malformed; treated as covering every requested entity (fail-closed)"
+    )
+    return None
 
 
 @dataclass
@@ -208,16 +232,72 @@ class LeaseManager:
             if profile is None:
                 continue
             sp = profile.raw.get("semantic_profile", {})
-            level = (sp.get("cooperative_priority") or {}).get("level")
-            if level not in _DENYING_LEVELS and level not in _CONFLICT_LEVELS:
+            cp = sp.get("cooperative_priority")
+            if cp is None:
                 continue
-            env = sp.get("environmental_dependencies") or {}
-            monitored = set(env.get("trigger_entities") or [])
-            monitored |= set(env.get("condition_entities") or [])
-            scope = set(monitored)
-            if level == "critical":
-                scope |= set((sp.get("intent_archetype") or {}).get("affected_entities") or [])
-            overlap = requested & (scope if level == "critical" else monitored)
+            # Malformed Section 11 data must fail closed: a typo'd level or a
+            # wrong-typed entity list on the one automation guarding a lock
+            # would otherwise silently disable its protection.
+            level: Any
+            if not isinstance(cp, dict):
+                warnings.append(
+                    f"cooperative_priority on {key} is not an object; "
+                    "treated as protected (fail-closed)"
+                )
+                level = "protected"
+            else:
+                level = cp.get("level")
+                if level is None:
+                    continue
+                if (
+                    level not in _DENYING_LEVELS
+                    and level not in _CONFLICT_LEVELS
+                    and level not in _INERT_LEVELS
+                ):
+                    warnings.append(
+                        f"unrecognized cooperative_priority.level {level!r} on {key}; "
+                        "treated as protected (fail-closed)"
+                    )
+                    level = "protected"
+            if level in _INERT_LEVELS:
+                continue
+            env = sp.get("environmental_dependencies")
+            monitored: set[str] | None
+            if env is None:
+                monitored = set()
+            elif not isinstance(env, dict):
+                warnings.append(
+                    f"environmental_dependencies on {key} is malformed; "
+                    "treated as covering every requested entity (fail-closed)"
+                )
+                monitored = None
+            else:
+                trig = _entity_set(env.get("trigger_entities"), f"{key} trigger_entities", warnings)
+                cond = _entity_set(
+                    env.get("condition_entities"), f"{key} condition_entities", warnings
+                )
+                monitored = None if trig is None or cond is None else trig | cond
+            scope = monitored
+            if level == "critical" and scope is not None:
+                ia = sp.get("intent_archetype")
+                if ia is None:
+                    affected: set[str] | None = set()
+                elif not isinstance(ia, dict):
+                    warnings.append(
+                        f"intent_archetype on {key} is malformed; "
+                        "treated as covering every requested entity (fail-closed)"
+                    )
+                    affected = None
+                else:
+                    affected = _entity_set(
+                        ia.get("affected_entities"),
+                        f"{key} intent_archetype.affected_entities",
+                        warnings,
+                    )
+                scope = None if affected is None else scope | affected
+            relevant = scope if level == "critical" else monitored
+            # Unevaluable scope covers everything requested (fail-closed).
+            overlap = set(requested) if relevant is None else requested & relevant
             if not overlap:
                 continue
             if level == "critical":
@@ -285,7 +365,7 @@ class LeaseManager:
         caller_priority: float | None = None,
         now: datetime | None = None,
     ) -> LeaseResponse:
-        now = now or datetime.now()
+        now = now or datetime.now(UTC)
         self._sweep(now)
         if not entities:
             raise ValueError("entities must be a non-empty list")
@@ -378,7 +458,7 @@ class LeaseManager:
         """Release a lease early. ``session_id``, when provided, must match the
         holder's; a mismatch reads as not-found so other sessions' leases are
         never disclosed (Spec 21.6)."""
-        now = now or datetime.now()
+        now = now or datetime.now(UTC)
         with self._lock:
             self._sweep(now)
             lease = self._registry.get(lease_id)
@@ -390,7 +470,7 @@ class LeaseManager:
 
     def release_session(self, session_id: str, *, now: datetime | None = None) -> int:
         """Release all leases of a terminated session (Spec 21.4). Returns count."""
-        now = now or datetime.now()
+        now = now or datetime.now(UTC)
         with self._lock:
             self._sweep(now)
             leases = self._registry.by_session(session_id)
@@ -403,16 +483,16 @@ class LeaseManager:
         """Sweep expired leases, emitting their events. Hosts SHOULD call this
         periodically for timely events; correctness does not depend on it."""
         with self._lock:
-            self._sweep(now or datetime.now())
+            self._sweep(now or datetime.now(UTC))
 
     def active_leases(self, now: datetime | None = None) -> list[Lease]:
         with self._lock:
-            return self._registry.active(now or datetime.now())
+            return self._registry.active(now or datetime.now(UTC))
 
     def sensor_state(self, now: datetime | None = None) -> dict[str, Any]:
         """The ``binary_sensor.mesa_lease_active`` state and attributes
         (Spec 21.4), for hosts that expose the sensor natively."""
-        now = now or datetime.now()
+        now = now or datetime.now(UTC)
         with self._lock:
             self._sweep(now)
             active = self._registry.active(now)
