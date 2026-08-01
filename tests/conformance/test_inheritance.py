@@ -197,6 +197,130 @@ def test_area_overrides_integration_level() -> None:
     assert levels["operational_boundaries.reversibility_cost"] == "area"
 
 
+def test_device_scope_overrides_area_level() -> None:
+    store = make_store(
+        get_entity_area=lambda eid: "area.nursery",
+        get_entity_device=lambda eid: "cam_device",
+    )
+    store.set_area_profile(
+        "area.nursery", make_profile("area.nursery", boundaries={"reversibility_cost": "moderate"})
+    )
+    store.set_device_profile(
+        "cam_device", make_profile("cam_device", boundaries={"reversibility_cost": "high"})
+    )
+    explanation = store._default_resolver().explain("camera.nursery")
+    assert explanation.effective_profile.operational_boundaries.reversibility_cost == "high"
+    levels = {e.field_path: e.provided_by_level for e in explanation.explanation}
+    assert levels["operational_boundaries.reversibility_cost"] == "device"
+
+
+def test_entity_overrides_device_scope() -> None:
+    store = make_store(get_entity_device=lambda eid: "cam_device")
+    store.set_device_profile(
+        "cam_device", make_profile("cam_device", boundaries={"reversibility_cost": "high"})
+    )
+    store.set(
+        "camera.nursery",
+        make_profile("camera.nursery", boundaries={"reversibility_cost": "trivial"}),
+    )
+    effective = store.get_effective("camera.nursery")
+    assert effective.operational_boundaries.reversibility_cost == "trivial"
+
+
+def test_device_scope_inert_without_callback() -> None:
+    # No entity-to-device mapping: a stored device profile resolves for nothing
+    # (Spec 5.6, no fallback; an unresolved profile grants nothing).
+    store = make_store()
+    store.set_device_profile(
+        "cam_device", make_profile("cam_device", boundaries={"reversibility_cost": "high"})
+    )
+    effective = store.get_effective("camera.nursery")
+    assert effective.operational_boundaries.reversibility_cost is None
+
+
+def test_device_scope_inert_for_entities_without_device() -> None:
+    store = make_store(get_entity_device=lambda eid: None)
+    store.set_device_profile(
+        "cam_device", make_profile("cam_device", boundaries={"reversibility_cost": "high"})
+    )
+    effective = store.get_effective("input_boolean.flag")
+    assert effective.operational_boundaries.reversibility_cost is None
+
+
+def test_has_profile_via_device_scope_only() -> None:
+    store = make_store(get_entity_device=lambda eid: "cam_device")
+    resolver = store._default_resolver()
+    assert not resolver.has_profile("camera.nursery")
+    store.set_device_profile("cam_device", make_profile("cam_device"))
+    assert resolver.has_profile("camera.nursery")
+
+
+def test_five_level_resolution_ordering() -> None:
+    # One Rule D field declared at every level: each explanation entry names the
+    # most specific declaring level (entity > device > area > integration > domain).
+    store = make_store(
+        get_entity_area=lambda eid: "area.hall",
+        get_entity_integration=lambda eid: "hue",
+        get_entity_device=lambda eid: "dev1",
+    )
+    store.set_domain_profile(
+        "light",
+        make_profile(
+            "light",
+            origin="developer",
+            boundaries={
+                "reversibility_cost": "none",
+                "state_volatility": "static",
+                "expected_latency_ms": 1,
+                "idempotent": True,
+                "state_persistence": "permanent",
+            },
+        ),
+    )
+    store.set_integration_profile(
+        "hue",
+        make_profile(
+            "hue",
+            origin="developer",
+            boundaries={
+                "state_volatility": "low",
+                "expected_latency_ms": 10,
+                "idempotent": False,
+                "state_persistence": "temporary",
+            },
+        ),
+    )
+    store.set_area_profile(
+        "area.hall",
+        make_profile(
+            "area.hall",
+            boundaries={
+                "expected_latency_ms": 100,
+                "idempotent": True,
+                "state_persistence": "session",
+            },
+        ),
+    )
+    store.set_device_profile(
+        "dev1",
+        make_profile(
+            "dev1",
+            boundaries={"idempotent": False, "state_persistence": "transient"},
+        ),
+    )
+    store.set(
+        "light.hall_strip",
+        make_profile("light.hall_strip", boundaries={"state_persistence": "permanent"}),
+    )
+    explanation = store._default_resolver().explain("light.hall_strip")
+    levels = {e.field_path: e.provided_by_level for e in explanation.explanation}
+    assert levels["operational_boundaries.reversibility_cost"] == "domain"
+    assert levels["operational_boundaries.state_volatility"] == "integration"
+    assert levels["operational_boundaries.expected_latency_ms"] == "area"
+    assert levels["operational_boundaries.idempotent"] == "device"
+    assert levels["operational_boundaries.state_persistence"] == "entity"
+
+
 def test_deployment_defaults_replace_baseline() -> None:
     store = make_store()
     store.set_deployment_defaults(

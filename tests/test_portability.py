@@ -43,6 +43,7 @@ def populated_store() -> ProfileStore:
     store.set_domain_profile("lock", profile("lock"))
     store.set_integration_profile("hue", profile("hue"))
     store.set_area_profile("area.bedroom", profile("area.bedroom"))
+    store.set_device_profile("dev1", profile("dev1"))
     store.set_deployment_defaults(
         {"deployment_defaults": {"default_control_mode": "confirm"}}
     )
@@ -67,7 +68,7 @@ def test_round_trip_across_backends(backend_kind: str, tmp_path: Path) -> None:
 
     result = import_profiles(target, archive)
     assert result.ok
-    assert result.imported == 6  # 2 entities + 3 scopes + defaults
+    assert result.imported == 7  # 2 entities + 4 scopes + defaults
     # Byte-identical documents on the other side, unknown fields included.
     assert all_docs(target) == all_docs(source)
     reloaded = target.get("light.x")
@@ -78,12 +79,13 @@ def test_round_trip_across_backends(backend_kind: str, tmp_path: Path) -> None:
 def test_archive_envelope_shape() -> None:
     archive = export_profiles(populated_store())
     inner = archive["mesa_export"]
-    assert inner["format_version"] == "1.0"
+    assert inner["format_version"] == "1.1"
     assert inner["exported_at"] and inner["mesa_core_version"]
     assert set(inner["entities"]) == {"light.x", "lock.front"}
     assert set(inner["domains"]) == {"lock"}
     assert set(inner["integrations"]) == {"hue"}
     assert set(inner["areas"]) == {"area.bedroom"}
+    assert set(inner["devices"]) == {"dev1"}
     assert "deployment_defaults" in inner
 
 
@@ -100,7 +102,7 @@ def test_export_is_faithful_import_validates() -> None:
     # Import quarantines the malformed doc and lands the rest.
     assert not result.ok
     assert "entities:light.bad" in result.invalid
-    assert result.imported == 6
+    assert result.imported == 7
     assert target.backend.read("light.bad") is None
 
 
@@ -110,7 +112,7 @@ def test_conflict_skip_is_default() -> None:
     archive = export_profiles(populated_store())
     result = import_profiles(target, archive)
     assert result.imported == 0 and result.overwritten == 0
-    assert len(result.skipped_existing) == 6
+    assert len(result.skipped_existing) == 7
     assert target.backend.read("light.x") == original
 
 
@@ -120,7 +122,7 @@ def test_conflict_overwrite() -> None:
     archive = export_profiles(populated_store())
     result = import_profiles(target, archive, on_conflict="overwrite")
     assert result.overwritten == 1
-    assert result.imported == 5
+    assert result.imported == 6
     reloaded = target.backend.read("light.x")
     assert reloaded is not None and "semantic_meaning" not in reloaded["semantic_profile"]
 
@@ -144,6 +146,39 @@ def test_invalid_archive_and_policy_rejected() -> None:
         import_profiles(store, {"mesa_export": {"format_version": "9.9"}})
     with pytest.raises(ValueError):
         import_profiles(store, export_profiles(store), on_conflict="merge")
+
+
+def test_import_accepts_1_0_archive_without_devices_section() -> None:
+    # A pre-1.1 archive has no devices section and format_version "1.0"; it
+    # must import cleanly (dual-accept), while unknown future versions reject.
+    store = ProfileStore(backend=MemoryBackend())
+    archive: dict[str, Any] = {
+        "mesa_export": {
+            "format_version": "1.0",
+            "entities": {"light.x": profile("light.x").to_dict()},
+            "domains": {"lock": profile("lock").to_dict()},
+        }
+    }
+    result = import_profiles(store, archive)
+    assert result.ok and result.imported == 2
+    with pytest.raises(MesaValidationError):
+        import_profiles(store, {"mesa_export": {"format_version": "1.2"}})
+
+
+def test_device_reserved_key_quarantined_in_entities_section() -> None:
+    # An entity entry named "__device__:x" would otherwise write straight
+    # through store.set as a device-wide policy the archive never declared.
+    store = ProfileStore(backend=MemoryBackend())
+    archive: dict[str, Any] = {
+        "mesa_export": {
+            "format_version": "1.1",
+            "entities": {"__device__:x": profile("x").to_dict()},
+        }
+    }
+    result = import_profiles(store, archive)
+    assert not result.ok
+    assert "entities:__device__:x" in result.invalid
+    assert store.backend.read("__device__:x") is None
 
 
 def test_non_object_archive_rejected() -> None:
@@ -181,6 +216,6 @@ def test_async_variants() -> None:
         archive = await aexport_profiles(source)
         target = ProfileStore(backend=MemoryBackend())
         result = await aimport_profiles(target, archive)
-        assert result.ok and result.imported == 6
+        assert result.ok and result.imported == 7
 
     asyncio.run(run())

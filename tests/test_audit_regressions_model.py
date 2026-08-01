@@ -85,8 +85,8 @@ def test_inherited_enrichment_is_carried_from_the_domain_layer() -> None:
 
 
 def test_more_specific_layer_wins_for_unmodelled_fields() -> None:
-    s = store()
-    for scope, setter in (("domain", s.set_domain_profile),):
+    s = ProfileStore(backend=MemoryBackend(), get_entity_device=lambda eid: "light")
+    for scope, setter in (("domain", s.set_domain_profile), ("device", s.set_device_profile)):
         setter(
             "light",
             SemanticProfile.from_dict(

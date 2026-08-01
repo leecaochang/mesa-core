@@ -39,7 +39,7 @@ VALID_HOUSEHOLD_ROLES = {
     "temporary_guest",
     "caregiver",
 }
-VALID_INHERITANCE_SCOPES = {"entity", "domain", "integration", "area"}
+VALID_INHERITANCE_SCOPES = {"entity", "domain", "integration", "area", "device"}
 PREDICATE_OPERATORS = {"eq", "neq", "gt", "gte", "lt", "lte", "in", "contains"}
 VALID_TEMPORAL_TYPES = {
     "time_range",
@@ -492,6 +492,16 @@ def validate_document(data: dict[str, Any], entity_id: str = "") -> ValidationRe
         _check_string(sp, key, key, report)
 
     _check_enum(sp, "inheritance_scope", VALID_INHERITANCE_SCOPES, "inheritance_scope", report)
+
+    # capability_semantics is an integration-profile section (Spec 8.2). Only its
+    # control_mode member participates in resolution (the Spec 4 capability hint),
+    # so only that member is typed; the rest stays unmodelled (Spec 23).
+    _object_at(sp, "capability_semantics", "capability_semantics", report)
+    cs = sp.get("capability_semantics")
+    if isinstance(cs, dict):
+        _check_enum(
+            cs, "control_mode", VALID_CONTROL_MODES, "capability_semantics.control_mode", report
+        )
 
     # profile_valid_for is a semantic_profile field; diagnostic_profile is a root
     # sibling. Both are opaque to this version (Spec 23) but must be objects: a

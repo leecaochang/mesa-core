@@ -1,8 +1,8 @@
 """ProfileStore: the central profile storage interface (Module Proposal 4.2).
 
-Key scheme: entity profiles are stored under their entity ID. Domain- and
-area-level profiles and deployment defaults use reserved ``__``-prefixed keys,
-which never collide with HA entity IDs.
+Key scheme: entity profiles are stored under their entity ID. Domain-,
+integration-, area-, and device-level profiles and deployment defaults use
+reserved ``__``-prefixed keys, which never collide with HA entity IDs.
 """
 
 from __future__ import annotations
@@ -35,6 +35,7 @@ _DEPLOYMENT_DEFAULTS_KEY = "__deployment_defaults__"
 _DOMAIN_PREFIX = "__domain__:"
 _INTEGRATION_PREFIX = "__integration__:"
 _AREA_PREFIX = "__area__:"
+_DEVICE_PREFIX = "__device__:"
 
 MAX_PAGE_SIZE = 200
 
@@ -186,7 +187,7 @@ def _decode_cursor(cursor: str, fingerprint: str) -> int:
 
 
 class ProfileStore:
-    """Read/write MESA profiles keyed by entity, domain, or area identifiers."""
+    """Read/write MESA profiles keyed by entity, domain, integration, area, or device IDs."""
 
     def __init__(
         self,
@@ -194,10 +195,12 @@ class ProfileStore:
         *,
         get_entity_area: Callable[[str], str | None] | None = None,
         get_entity_integration: Callable[[str], str | None] | None = None,
+        get_entity_device: Callable[[str], str | None] | None = None,
     ) -> None:
         self.backend = backend
         self.get_entity_area = get_entity_area
         self.get_entity_integration = get_entity_integration
+        self.get_entity_device = get_entity_device
         self._resolver: InheritanceResolver | None = None
 
     # -- entity profiles ------------------------------------------------------
@@ -298,6 +301,20 @@ class ProfileStore:
     def delete_area_profile(self, area_id: str) -> None:
         self.backend.delete(f"{_AREA_PREFIX}{area_id}")
 
+    def get_device_profile(self, device_id: str) -> SemanticProfile | None:
+        data = self.backend.read(f"{_DEVICE_PREFIX}{device_id}")
+        if data is None:
+            return None
+        profile = SemanticProfile.from_dict(device_id, data)
+        profile.inheritance_scope = "device"
+        return profile
+
+    def set_device_profile(self, device_id: str, profile: SemanticProfile) -> None:
+        self.backend.write(f"{_DEVICE_PREFIX}{device_id}", self._stamped_doc(profile, device_id))
+
+    def delete_device_profile(self, device_id: str) -> None:
+        self.backend.delete(f"{_DEVICE_PREFIX}{device_id}")
+
     # -- deployment defaults ----------------------------------------------------
 
     def get_deployment_defaults(self) -> DeploymentDefaults | None:
@@ -339,14 +356,41 @@ class ProfileStore:
         """Area IDs that have an area-level profile stored."""
         return [k[len(_AREA_PREFIX) :] for k in self.backend.list_keys(_AREA_PREFIX)]
 
-    def find_orphans(self, known_entity_ids: Iterable[str]) -> list[str]:
-        """Stored entity profile keys absent from the deployment's entity registry.
+    def device_keys(self) -> list[str]:
+        """Device IDs that have a device-level profile stored."""
+        return [k[len(_DEVICE_PREFIX) :] for k in self.backend.list_keys(_DEVICE_PREFIX)]
+
+    def find_orphans(
+        self,
+        known_entity_ids: Iterable[str],
+        *,
+        known_domains: Iterable[str] | None = None,
+        known_integrations: Iterable[str] | None = None,
+        known_areas: Iterable[str] | None = None,
+        known_devices: Iterable[str] | None = None,
+    ) -> list[str]:
+        """Stored profile keys absent from the deployment's registries.
 
         Hosts SHOULD run this at startup and on entity registry updates and
-        surface results to the operator (Spec 5.5, entity renames).
+        surface results to the operator (Spec 5.5, entity renames). Each
+        keyword registry, when supplied, extends the check to that scope's
+        profiles; scoped orphans are returned as their full reserved key
+        (``__device__:abc123``) so callers can tell the scopes apart. An
+        omitted keyword leaves that scope unchecked.
         """
         known = set(known_entity_ids)
-        return [k for k in self.entity_keys() if k not in known]
+        orphans = [k for k in self.entity_keys() if k not in known]
+        for registry, keys, prefix in (
+            (known_domains, self.domain_keys, _DOMAIN_PREFIX),
+            (known_integrations, self.integration_keys, _INTEGRATION_PREFIX),
+            (known_areas, self.area_keys, _AREA_PREFIX),
+            (known_devices, self.device_keys, _DEVICE_PREFIX),
+        ):
+            if registry is None:
+                continue
+            known_scope = set(registry)
+            orphans.extend(f"{prefix}{k}" for k in keys() if k not in known_scope)
+        return orphans
 
     def _fingerprint(self) -> str:
         """Identify the data a cursor was issued against (Spec 9.2).
@@ -356,7 +400,7 @@ class ProfileStore:
         stored offset points into, and keys alone cannot see that. Covers the
         inherited layers too, not only entity documents: query filters and the
         returned page depend on the effective profile, so a domain, integration,
-        area, or deployment_defaults change can move a row across the page
+        area, device, or deployment_defaults change can move a row across the page
         boundary or in and out of the match set without any entity document
         changing.
         """
@@ -374,6 +418,8 @@ class ProfileStore:
         tags: list[str] | None = None,
         tags_match: str = "any",
         areas: list[str] | None = None,
+        devices: list[str] | None = None,
+        integrations: list[str] | None = None,
         intents: list[str] | None = None,
         include_inferred: bool = False,
         origin: str | None = None,
@@ -386,14 +432,18 @@ class ProfileStore:
 
         Tag and intent filters match the effective (resolved) tag set per Spec
         9.2, so resolution is used; the resolver defaults to this store's. Cheap
-        attribute filters (domain, origin, area) run first and resolution is
-        deferred to the survivors, or to just the returned page when neither a
-        tag nor an intent filter is present.
+        attribute filters (domain, origin, area, device, integration) run first
+        and resolution is deferred to the survivors, or to just the returned
+        page when neither a tag nor an intent filter is present.
 
         ``include_inferred=False`` excludes ``inferred_ai`` and ``unknown``
         origins (Spec 5.4 Rule 5) unless an explicit ``origin`` filter asks for
-        them. Raises ValueError for malformed filter arguments and
-        InvalidCursorError for a stale or malformed cursor.
+        them. ``origin`` is a Python-level filter deliberately not exposed over
+        MCP: the wire schema offers ``min_origin_authority`` only (Spec 9.2),
+        because an exact-origin filter can re-admit inferred profiles past the
+        ``include_inferred`` opt-in gate, which hosts must mediate themselves.
+        Raises ValueError for malformed filter arguments and InvalidCursorError
+        for a stale or malformed cursor.
         """
         if tags_match not in ("any", "all"):
             raise ValueError(f"invalid tags_match: {tags_match!r}")
@@ -411,6 +461,14 @@ class ProfileStore:
         get_area = resolver.get_entity_area
         if areas and get_area is None:
             raise ValueError("areas filter requires the get_entity_area callback")
+        get_device = resolver.get_entity_device
+        if devices and get_device is None:
+            raise ValueError("devices filter requires the get_entity_device callback")
+        # No domain fallback here, unlike resolution: a fallback filter would
+        # silently change which rows match, so an absent mapping fails loudly.
+        get_integration = resolver.get_entity_integration
+        if integrations and get_integration is None:
+            raise ValueError("integrations filter requires the get_entity_integration callback")
 
         limit = max(1, min(limit, MAX_PAGE_SIZE))
         filter_needs_resolution = bool(tags or intents)
@@ -438,6 +496,14 @@ class ProfileStore:
             if min_authority is not None and ORIGIN_AUTHORITY[source] < min_authority:
                 continue
             if areas and get_area is not None and get_area(key) not in areas:
+                continue
+            if devices and get_device is not None and get_device(key) not in devices:
+                continue
+            if (
+                integrations
+                and get_integration is not None
+                and get_integration(key) not in integrations
+            ):
                 continue
             effective: SemanticProfile | None = None
             if filter_needs_resolution:
@@ -549,6 +615,15 @@ class ProfileStore:
     async def adelete_area_profile(self, area_id: str) -> None:
         await asyncio.to_thread(self.delete_area_profile, area_id)
 
+    async def aget_device_profile(self, device_id: str) -> SemanticProfile | None:
+        return await asyncio.to_thread(self.get_device_profile, device_id)
+
+    async def aset_device_profile(self, device_id: str, profile: SemanticProfile) -> None:
+        await asyncio.to_thread(self.set_device_profile, device_id, profile)
+
+    async def adelete_device_profile(self, device_id: str) -> None:
+        await asyncio.to_thread(self.delete_device_profile, device_id)
+
     async def aget_deployment_defaults(self) -> DeploymentDefaults | None:
         return await asyncio.to_thread(self.get_deployment_defaults)
 
@@ -575,6 +650,9 @@ class ProfileStore:
     async def aarea_keys(self) -> list[str]:
         return await asyncio.to_thread(self.area_keys)
 
+    async def adevice_keys(self) -> list[str]:
+        return await asyncio.to_thread(self.device_keys)
+
     async def aquery(self, **kwargs: Any) -> ProfileQueryResult:
         return await asyncio.to_thread(lambda: self.query(**kwargs))
 
@@ -584,5 +662,21 @@ class ProfileStore:
     async def aexplain(self, entity_id: str) -> ProfileExplanation:
         return await asyncio.to_thread(self.explain, entity_id)
 
-    async def afind_orphans(self, known_entity_ids: Iterable[str]) -> list[str]:
-        return await asyncio.to_thread(self.find_orphans, known_entity_ids)
+    async def afind_orphans(
+        self,
+        known_entity_ids: Iterable[str],
+        *,
+        known_domains: Iterable[str] | None = None,
+        known_integrations: Iterable[str] | None = None,
+        known_areas: Iterable[str] | None = None,
+        known_devices: Iterable[str] | None = None,
+    ) -> list[str]:
+        return await asyncio.to_thread(
+            lambda: self.find_orphans(
+                known_entity_ids,
+                known_domains=known_domains,
+                known_integrations=known_integrations,
+                known_areas=known_areas,
+                known_devices=known_devices,
+            )
+        )

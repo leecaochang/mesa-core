@@ -27,12 +27,25 @@ from mesa_core.lease import LeaseManager
 from mesa_core.mcp.adapters import ToolRegistry
 from mesa_core.mcp.schemas import TOOL_DESCRIPTIONS, TOOL_SCHEMAS
 from mesa_core.privacy import AccessDecision, CallerContext, PrivacyEnforcer
-from mesa_core.profile import SemanticProfile
+from mesa_core.profile import HELPER_DOMAINS, SemanticProfile
 from mesa_core.store import ProfileStore
 
 logger = logging.getLogger("mesa_core.mcp")
 
-MESA_VERSION = "1.0"
+MESA_VERSION = "1.1"
+
+# component_type values derivable from an entity ID's domain (Spec 9.3).
+# Results are always entity-keyed, so scoped component types never occur.
+_COMPONENT_DOMAINS = {"automation", "scene", "zone", "person"}
+
+
+def _component_type(entity_id: str) -> str:
+    domain = entity_id.split(".", 1)[0]
+    if domain in _COMPONENT_DOMAINS:
+        return domain
+    if domain in HELPER_DOMAINS:
+        return "helper"
+    return "entity"
 
 _ANONYMOUS = CallerContext(
     caller_id="anonymous", roles=[], is_authenticated=False, session_id=""
@@ -214,7 +227,7 @@ class MesaToolHandlers:
             sp = {k: v for k, v in sp.items() if k in keep}
         out: dict[str, Any] = {
             "entity_id": entity_id,
-            "component_type": "entity",
+            "component_type": _component_type(entity_id),
             "semantic_profile": sp,
             "privacy_classification": doc.get("privacy_classification"),
         }
@@ -245,6 +258,8 @@ class MesaToolHandlers:
                 tags=params.get("tags"),
                 tags_match=params.get("tags_match", "any"),
                 areas=params.get("areas"),
+                devices=params.get("devices"),
+                integrations=params.get("integrations"),
                 intents=params.get("intents"),
                 include_inferred=params.get("include_inferred", False),
                 min_origin_authority=params.get("min_origin_authority"),
@@ -316,7 +331,7 @@ class MesaToolHandlers:
             out: dict[str, Any] = {
                 "mesa_version": MESA_VERSION,
                 "entity_id": entity_id,
-                "component_type": "entity",
+                "component_type": _component_type(entity_id),
                 "semantic_profile": doc.get("semantic_profile", {}),
                 "privacy_classification": doc.get("privacy_classification"),
             }

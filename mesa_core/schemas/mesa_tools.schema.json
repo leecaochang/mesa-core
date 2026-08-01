@@ -5,7 +5,7 @@
   "description": "Input schemas for the MESA retrieval API tools (MESA Specification Section 9) and the lease coordination tools (MESA Enrichment Section 21).",
   "tools": {
     "mesa_query_profiles": {
-      "description": "Query MESA semantic profiles by domain, tag, area, intent, or origin, with pagination. Returns effective (inheritance-resolved) profiles.",
+      "description": "Query MESA semantic profiles by domain, tag, area, device, integration, intent, or origin, with pagination. Returns effective (inheritance-resolved) profiles.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
@@ -34,6 +34,20 @@
             "items": {
               "type": "string"
             }
+          },
+          "devices": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Filter by HA device registry ID; requires the host's entity-to-device mapping (Spec 5.6)."
+          },
+          "integrations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Filter by the integration that created the entity; requires the host's entity-to-integration mapping (Spec 5.6)."
           },
           "intents": {
             "type": "array",

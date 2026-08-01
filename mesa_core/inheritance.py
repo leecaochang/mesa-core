@@ -1,4 +1,4 @@
-"""Inheritance resolution: defaults -> domain -> area -> entity (Spec 5.6, 5.8).
+"""Inheritance resolution: defaults, then domain, integration, area, device, entity (Spec 5.6, 5.8).
 
 The InheritanceResolver gathers the declared layers for an entity, merges them
 through the ConflictResolver (Rules A-E), and fills undeclared kernel fields
@@ -64,6 +64,10 @@ class InheritanceResolver:
     ``get_entity_integration`` is absent, the integration level falls back to the
     entity's HA domain, which resolves domain-defining integrations (``light``,
     ``lock``, ...) and leaves device and hub integration profiles inert.
+    ``get_entity_device`` maps an entity ID to the HA device registry ID of the
+    physical device that owns it (None when the entity belongs to no device);
+    when absent there is no fallback and device-scope profiles are inert
+    (Spec 5.6).
     """
 
     def __init__(
@@ -72,6 +76,7 @@ class InheritanceResolver:
         get_entity_area: Callable[[str], str | None] | None = None,
         get_entity_domain: Callable[[str], str] | None = None,
         get_entity_integration: Callable[[str], str | None] | None = None,
+        get_entity_device: Callable[[str], str | None] | None = None,
     ) -> None:
         self.store = store
         self.get_entity_area = get_entity_area or store.get_entity_area
@@ -79,6 +84,7 @@ class InheritanceResolver:
         self.get_entity_integration = get_entity_integration or getattr(
             store, "get_entity_integration", None
         )
+        self.get_entity_device = get_entity_device or getattr(store, "get_entity_device", None)
         self._conflicts = ConflictResolver()
 
     def _gather_layers(
@@ -91,6 +97,14 @@ class InheritanceResolver:
             entity_profile = self.store.get(entity_id)
         if entity_profile is not None:
             layers.append(Layer("entity", entity_profile))
+        # Device level (Spec 5.6): host maps entity to owning device; no
+        # fallback exists, so without the callback device profiles are inert.
+        if self.get_entity_device is not None:
+            device_id = self.get_entity_device(entity_id)
+            if device_id is not None:
+                device_profile = self.store.get_device_profile(device_id)
+                if device_profile is not None:
+                    layers.append(Layer("device", device_profile))
         if self.get_entity_area is not None:
             area_id = self.get_entity_area(entity_id)
             if area_id is not None:

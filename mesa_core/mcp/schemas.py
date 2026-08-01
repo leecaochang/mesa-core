@@ -10,8 +10,9 @@ from typing import Any
 
 TOOL_DESCRIPTIONS: dict[str, str] = {
     "mesa_query_profiles": (
-        "Query MESA semantic profiles by domain, tag, area, intent, or origin, "
-        "with pagination. Returns effective (inheritance-resolved) profiles."
+        "Query MESA semantic profiles by domain, tag, area, device, integration, "
+        "intent, or origin, with pagination. Returns effective "
+        "(inheritance-resolved) profiles."
     ),
     "mesa_get_profile": (
         "Retrieve the complete effective MESA profile for one entity, optionally "
@@ -44,6 +45,22 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "tags": {"type": "array", "items": {"type": "string"}},
             "tags_match": {"enum": ["any", "all"], "default": "any"},
             "areas": {"type": "array", "items": {"type": "string"}},
+            "devices": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Filter by HA device registry ID; requires the host's "
+                    "entity-to-device mapping (Spec 5.6)."
+                ),
+            },
+            "integrations": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Filter by the integration that created the entity; requires "
+                    "the host's entity-to-integration mapping (Spec 5.6)."
+                ),
+            },
             "intents": {"type": "array", "items": {"type": "string"}},
             "min_origin_authority": {
                 "enum": ["inferred_ai", "hybrid", "user", "developer"]

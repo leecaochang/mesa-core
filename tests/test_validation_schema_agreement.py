@@ -115,7 +115,8 @@ _RICH_ROOT: dict[str, Any] = {
         },
         "semantic_tags": ["lighting.ambient", "vendorx.custom"],
         "last_updated": "2026-01-01",
-        "inheritance_scope": "domain",
+        "inheritance_scope": "device",
+        "capability_semantics": {"control_mode": "confirm", "network_dependency": "local_only"},
         "profile_valid_for": {"conditions": []},
         "operational_boundaries": {
             "control_mode": "confirm",
@@ -320,6 +321,16 @@ _REGRESSION_CASES: list[tuple[str, dict[str, Any], bool]] = [
     ("no_sibling_nested_nonobject", _privacy(None, "x", has_sibling=False), False),
     ("no_sibling_nested_null", _privacy(None, None, has_sibling=False), True),
     ("sibling_null_nested_valid", _privacy(None, _GOOD_PC, has_sibling=True), False),
+    # MESA 1.1: device scope is valid; unknown scopes stay fail-closed (Spec 23).
+    ("inheritance_scope_device", _with_sp("inheritance_scope", "device"), True),
+    ("inheritance_scope_unknown", _with_sp("inheritance_scope", "floor"), False),
+    # MESA 1.1: capability_semantics.control_mode is enum-checked; other members
+    # stay unmodelled; the section must be an object.
+    ("capability_cm_valid", _with_sp("capability_semantics", {"control_mode": "confirm"}), True),
+    ("capability_cm_invalid", _with_sp("capability_semantics", {"control_mode": "always"}), False),
+    ("capability_cm_nonstring", _with_sp("capability_semantics", {"control_mode": 1}), False),
+    ("capability_other_members", _with_sp("capability_semantics", {"network_dependency": 3}), True),
+    ("capability_not_object", _with_sp("capability_semantics", "local_only"), False),
 ]
 
 

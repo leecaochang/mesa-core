@@ -24,12 +24,17 @@ from mesa_core.profile import SemanticProfile
 from mesa_core.store import (
     _AREA_PREFIX,
     _DEPLOYMENT_DEFAULTS_KEY,
+    _DEVICE_PREFIX,
     _DOMAIN_PREFIX,
     _INTEGRATION_PREFIX,
     ProfileStore,
 )
 
-ARCHIVE_FORMAT_VERSION = "1.0"
+# 1.1 added the devices section (MESA 1.1 device scope). Import accepts both
+# versions; export always writes the current one, so an older mesa-core rejects
+# a new archive outright instead of silently dropping the devices section.
+ARCHIVE_FORMAT_VERSION = "1.1"
+_ACCEPTED_FORMAT_VERSIONS = ("1.0", "1.1")
 
 # (archive section, reserved-key prefix) in export order. Entities use the
 # bare key. Unknown future reserved keys are not exported.
@@ -37,6 +42,7 @@ _SECTIONS = (
     ("domains", _DOMAIN_PREFIX),
     ("integrations", _INTEGRATION_PREFIX),
     ("areas", _AREA_PREFIX),
+    ("devices", _DEVICE_PREFIX),
 )
 
 
@@ -124,7 +130,7 @@ def import_profiles(
     if not isinstance(inner, dict):
         raise MesaValidationError("not a mesa_export archive (missing 'mesa_export' root)")
     fmt = inner.get("format_version")
-    if fmt != ARCHIVE_FORMAT_VERSION:
+    if fmt not in _ACCEPTED_FORMAT_VERSIONS:
         raise MesaValidationError(f"unsupported archive format_version: {fmt!r}")
 
     result = ImportResult()
@@ -133,6 +139,7 @@ def import_profiles(
         ("domains", _DOMAIN_PREFIX, store.set_domain_profile),
         ("integrations", _INTEGRATION_PREFIX, store.set_integration_profile),
         ("areas", _AREA_PREFIX, store.set_area_profile),
+        ("devices", _DEVICE_PREFIX, store.set_device_profile),
     ]
 
     # Conflict scan first, so on_conflict="error" is all-or-nothing.
@@ -165,8 +172,8 @@ def import_profiles(
         for key, doc in docs.items():
             label = f"{section}:{key}"
             if not _is_importable_key(key):
-                # Reserved keys address the domain/integration/area/defaults
-                # namespaces. An entity entry named "__domain__:lock" would
+                # Reserved keys address the domain/integration/area/device/
+                # defaults namespaces. An entity entry named "__domain__:lock" would
                 # otherwise be written straight through store.set as a
                 # domain-wide policy the archive never declared as one.
                 result.invalid[label] = (

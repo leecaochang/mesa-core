@@ -52,7 +52,7 @@ def test_query_filters_domains_and_excludes_untrusted_by_default() -> None:
     store.set("light.inferred", make_profile("light.inferred", origin="inferred_ai"))
 
     result = call(registry, "mesa_query_profiles", domains=["light"])
-    assert result["mesa_version"] == "1.0"
+    assert result["mesa_version"] == "1.1"
     assert result["total_matched"] == 1
     assert result["results"][0]["entity_id"] == "light.a"
 
@@ -269,7 +269,7 @@ def _lease_registry() -> DictToolRegistry:
 def test_lease_request_and_release_round_trip() -> None:
     registry = _lease_registry()
     granted = call(registry, "mesa_request_lease", entities=["light.x"], duration_seconds=10)
-    assert granted["mesa_version"] == "1.0"
+    assert granted["mesa_version"] == "1.1"
     assert granted["granted"] and granted["entities_granted"] == ["light.x"]
 
     released = call(registry, "mesa_release_lease", lease_id=granted["lease_id"])
@@ -423,3 +423,47 @@ def test_query_pagination_returned_matches_results_after_denial() -> None:
     assert result["pagination"]["returned"] == len(result["results"]) == 0
     # total_matched still counts the entity that matched the filters pre-shaping.
     assert result["total_matched"] == 1
+
+
+# -------------------------------- MESA 1.1: filters, component_type, unknown_tool
+
+
+def test_query_devices_and_integrations_filters_end_to_end() -> None:
+    store = ProfileStore(
+        backend=MemoryBackend(),
+        get_entity_device={"light.a": "dev1", "light.b": "dev2"}.get,
+        get_entity_integration={"light.a": "hue", "light.b": "hue"}.get,
+    )
+    registry, _ = make_registry(store)
+    store.set("light.a", make_profile("light.a"))
+    store.set("light.b", make_profile("light.b"))
+
+    result = call(registry, "mesa_query_profiles", devices=["dev1"])
+    assert result["total_matched"] == 1
+    assert result["results"][0]["entity_id"] == "light.a"
+    result = call(registry, "mesa_query_profiles", integrations=["hue"])
+    assert result["total_matched"] == 2
+
+
+def test_query_filters_without_callbacks_return_invalid_query() -> None:
+    registry, store = make_registry()
+    store.set("light.a", make_profile("light.a"))
+    for param in ({"devices": ["dev1"]}, {"integrations": ["hue"]}):
+        result = call(registry, "mesa_query_profiles", **param)
+        assert result["error"] == "invalid_query"
+        assert "callback" in result["message"]
+
+
+def test_component_type_derived_from_domain() -> None:
+    registry, store = make_registry()
+    for entity_id, expected in (
+        ("light.a", "entity"),
+        ("automation.morning", "automation"),
+        ("scene.movie", "scene"),
+        ("person.foxy", "person"),
+        ("zone.home", "zone"),
+        ("input_boolean.flag", "helper"),
+    ):
+        store.set(entity_id, make_profile(entity_id))
+        got = call(registry, "mesa_get_profile", entity_id=entity_id)
+        assert got["component_type"] == expected, entity_id

@@ -14,7 +14,7 @@ a parse/serialise round-trip neither invents declarations nor loses them.
 from __future__ import annotations
 
 import copy
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -177,7 +177,10 @@ class PersonTraits:
 
 @dataclass
 class ProfileMetadata:
-    schema_version: str = "1.0"
+    # Programmatically built profiles are authored by this library, so they
+    # carry the current format version; from_dict keeps "1.0" for unversioned
+    # stored documents (Spec 23: never silently migrated).
+    schema_version: str = "1.1"
     profile_version: str | None = None
     source: MetadataOrigin = MetadataOrigin.UNKNOWN
     confidence: float | None = None
@@ -411,6 +414,87 @@ class SemanticProfile:
         # int/float comparison is exact and cannot overflow.
         age_seconds = (now - generated).total_seconds()
         return "stale" if age_seconds > self.metadata.staleness_window_days * 86400 else "current"
+
+    def validity_warnings(
+        self,
+        *,
+        now: datetime | None = None,
+        known_entity_ids: Iterable[str] | None = None,
+        integration_version: str | None = None,
+        ha_version: str | None = None,
+    ) -> list[str]:
+        """Advisory warnings from the profile_valid_for triggers (Spec 5.5).
+
+        Each check runs only when the host supplies its input: pass the entity
+        registry to evaluate ``invalidated_by_entities`` and the current
+        versions to evaluate the version pins. Version comparison is exact
+        string inequality: versions are implementor-defined strings, so an
+        ordering guess would be dishonest. Advisory only: a fired trigger
+        flags the profile for review and never discards it. Typically called
+        on the effective profile, whose ``profile_valid_for`` has been merged
+        per subfield across the inheritance layers.
+        """
+        pvf = self.metadata.profile_valid_for
+        if not isinstance(pvf, dict):
+            return []
+        warnings: list[str] = []
+        prefix = f"{self.entity_id}: "
+
+        days = pvf.get("review_after_days")
+        if isinstance(days, int | float) and not isinstance(days, bool):
+            anchor_raw = self.metadata.last_updated or self.metadata.generated_at
+            anchor: datetime | None = None
+            if anchor_raw:
+                try:
+                    anchor = datetime.fromisoformat(anchor_raw)
+                except ValueError:
+                    anchor = None
+            if anchor is None:
+                # Unevaluable is surfaced, never silent: the operator declared
+                # a review window that nothing anchors.
+                warnings.append(
+                    prefix + "review_after_days is declared but cannot be evaluated: "
+                    "neither last_updated nor metadata_origin.generated_at provides "
+                    "a parseable anchor timestamp"
+                )
+            else:
+                current = now or datetime.now(tz=anchor.tzinfo)
+                # Mixed tz-awareness: compare wall clocks (as staleness_status).
+                if current.tzinfo is None and anchor.tzinfo is not None:
+                    anchor = anchor.replace(tzinfo=None)
+                elif current.tzinfo is not None and anchor.tzinfo is None:
+                    current = current.replace(tzinfo=None)
+                # Seconds, not timedelta(days=...): exact and cannot overflow.
+                if (current - anchor).total_seconds() > days * 86400:
+                    warnings.append(
+                        prefix + f"profile is due for review: review_after_days ({days}) "
+                        f"has elapsed since {anchor_raw}"
+                    )
+
+        if known_entity_ids is not None:
+            known = set(known_entity_ids)
+            declared = pvf.get("invalidated_by_entities")
+            if isinstance(declared, list):
+                for ref in declared:
+                    if isinstance(ref, str) and ref not in known:
+                        warnings.append(
+                            prefix + f"invalidated: entity {ref} named in "
+                            "invalidated_by_entities is no longer in the registry"
+                        )
+
+        for key, current_version in (
+            ("integration_version", integration_version),
+            ("ha_version", ha_version),
+        ):
+            if current_version is None:
+                continue
+            declared_version = pvf.get(key)
+            if isinstance(declared_version, str) and declared_version != current_version:
+                warnings.append(
+                    prefix + f"{key} mismatch: profile authored against "
+                    f"{declared_version}, current is {current_version}"
+                )
+        return warnings
 
     # -- parsing ------------------------------------------------------------
 

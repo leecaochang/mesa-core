@@ -103,6 +103,48 @@ def test_delete_missing_scope_profile_is_noop(backend: StorageBackend) -> None:
     store = ProfileStore(backend=backend)
     store.delete_domain_profile("nonexistent")
     store.delete_area_profile("area.nope")  # no error, mirrors delete()
+    store.delete_device_profile("nodevice")
+
+
+def test_device_profiles_use_reserved_keys(backend: StorageBackend) -> None:
+    store = ProfileStore(backend=backend)
+    store.set_device_profile("abc123", _profile("abc123"))
+    store.set("light.x", _profile("light.x"))
+    assert store.entity_keys() == ["light.x"]
+    assert store.device_keys() == ["abc123"]
+    device = store.get_device_profile("abc123")
+    assert device is not None and device.inheritance_scope == "device"
+    store.delete_device_profile("abc123")
+    assert store.get_device_profile("abc123") is None
+    assert store.get("light.x") is not None
+
+
+def test_find_orphans_covers_scoped_profiles(backend: StorageBackend) -> None:
+    store = ProfileStore(backend=backend)
+    store.set("light.x", _profile("light.x"))
+    store.set("light.gone", _profile("light.gone"))
+    store.set_domain_profile("light", _profile("light"))
+    store.set_integration_profile("hue", _profile("hue"))
+    store.set_area_profile("area.old_kitchen", _profile("area.old_kitchen"))
+    store.set_device_profile("gone_device", _profile("gone_device"))
+
+    # The plain one-argument call is unchanged: entity keys only.
+    assert store.find_orphans(["light.x"]) == ["light.gone"]
+
+    # Each supplied registry extends the check; scoped orphans come back as
+    # their full reserved key so callers can tell the scopes apart.
+    orphans = store.find_orphans(
+        ["light.x", "light.gone"],
+        known_domains=["light"],
+        known_integrations=[],
+        known_areas=["area.kitchen"],
+        known_devices=["abc123"],
+    )
+    assert orphans == [
+        "__integration__:hue",
+        "__area__:area.old_kitchen",
+        "__device__:gone_device",
+    ]
 
 
 def test_deployment_defaults_round_trip(backend: StorageBackend) -> None:
@@ -149,6 +191,37 @@ def test_query_filters() -> None:
     assert {p.entity_id for p in store.query(tags=["lighting.task"]).profiles} == {"light.b"}
     assert store.query(areas=["area.living_room"]).total_matched == 3
     assert store.query(areas=["area.elsewhere"]).total_matched == 0
+
+
+def test_query_device_and_integration_filters() -> None:
+    devices = {"light.a": "dev1", "light.b": "dev2", "switch.c": "dev1"}
+    integrations = {"light.a": "hue", "light.b": "hue", "switch.c": "shelly"}
+    store = ProfileStore(
+        backend=MemoryBackend(),
+        get_entity_device=devices.get,
+        get_entity_integration=integrations.get,
+    )
+    store.set("light.a", _profile("light.a"))
+    store.set("light.b", _profile("light.b"))
+    store.set("switch.c", _profile("switch.c"))
+
+    assert {r.entity_id for r in store.query(devices=["dev1"]).rows} == {"light.a", "switch.c"}
+    assert store.query(devices=["dev3"]).total_matched == 0
+    assert {r.entity_id for r in store.query(integrations=["hue"]).rows} == {"light.a", "light.b"}
+    assert {r.entity_id for r in store.query(devices=["dev1"], integrations=["hue"]).rows} == {
+        "light.a"
+    }
+
+
+def test_query_device_and_integration_filters_require_callbacks() -> None:
+    # Mirrors the areas guard: a filter with no mapping fails loudly instead of
+    # silently matching nothing (no domain fallback for the integrations filter).
+    store = ProfileStore(backend=MemoryBackend())
+    store.set("light.a", _profile("light.a"))
+    with pytest.raises(ValueError, match="get_entity_device"):
+        store.query(devices=["dev1"])
+    with pytest.raises(ValueError, match="get_entity_integration"):
+        store.query(integrations=["hue"])
 
 
 def test_query_matches_effective_inherited_tags() -> None:
@@ -250,16 +323,20 @@ def test_async_variants() -> None:
         await store.aset_domain_profile("light", _profile("light"))
         await store.aset_integration_profile("hue", _profile("hue"))
         await store.aset_area_profile("area.bedroom", _profile("area.bedroom"))
+        await store.aset_device_profile("abc123", _profile("abc123"))
         domain = await store.aget_domain_profile("light")
         assert domain is not None and domain.inheritance_scope == "domain"
         integration = await store.aget_integration_profile("hue")
         assert integration is not None and integration.inheritance_scope == "integration"
         area = await store.aget_area_profile("area.bedroom")
         assert area is not None and area.inheritance_scope == "area"
+        device = await store.aget_device_profile("abc123")
+        assert device is not None and device.inheritance_scope == "device"
         assert await store.aentity_keys() == []
         assert await store.adomain_keys() == ["light"]
         assert await store.aintegration_keys() == ["hue"]
         assert await store.aarea_keys() == ["area.bedroom"]
+        assert await store.adevice_keys() == ["abc123"]
 
         await store.aset_deployment_defaults(
             {"deployment_defaults": {"default_control_mode": "prohibited"}}
@@ -270,9 +347,11 @@ def test_async_variants() -> None:
         await store.adelete_domain_profile("light")
         await store.adelete_integration_profile("hue")
         await store.adelete_area_profile("area.bedroom")
+        await store.adelete_device_profile("abc123")
         assert store.get_domain_profile("light") is None
         assert store.get_integration_profile("hue") is None
         assert store.get_area_profile("area.bedroom") is None
+        assert store.get_device_profile("abc123") is None
 
     asyncio.run(run())
 

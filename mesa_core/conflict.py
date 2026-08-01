@@ -28,7 +28,7 @@ from mesa_core.profile import (
     path_segment,
 )
 
-SCOPE_RANK = {"entity": 4, "area": 3, "integration": 2, "domain": 1}
+SCOPE_RANK = {"entity": 5, "device": 4, "area": 3, "integration": 2, "domain": 1}
 
 # Rule D fields on operational_boundaries (everything not covered by Rules A/B).
 _OB_RULE_D_FIELDS = (
@@ -88,7 +88,10 @@ _ACCESS_DECISION_FIELDS = frozenset(
 
 @dataclass
 class Layer:
-    """One inheritance level's profile: level is 'entity', 'area', 'integration', or 'domain'."""
+    """One inheritance level's profile.
+
+    ``level`` is 'entity', 'device', 'area', 'integration', or 'domain'.
+    """
 
     level: str
     profile: SemanticProfile
@@ -137,9 +140,16 @@ class Resolution:
 class _Candidate:
     layer: Layer
     value: Any
+    capability_hint: bool = False
 
     @property
     def scope_rank(self) -> int:
+        # The Spec 4 capability hint ranks below every operational_boundaries
+        # declaration regardless of its layer's scope.
+        if self.capability_hint:
+            return 0
+        # An unknown level ranks 0, below domain: it can never displace a known
+        # level, so a missed enumeration site fails closed rather than winning.
         return SCOPE_RANK.get(self.layer.level, 0)
 
     @property
@@ -320,6 +330,46 @@ def _coerced_control_mode(layer: Layer) -> tuple[ControlMode, str | None]:
     return mode, None
 
 
+def _capability_hint_mode(layer: Layer) -> tuple[ControlMode | None, str | None]:
+    """Read the Spec 4 capability hint from an integration profile's raw form.
+
+    ``capability_semantics.control_mode`` contributes to Rule A only when the
+    integration profile declares no ``operational_boundaries.control_mode``. A
+    malformed hint value is ignored with a warning: a hint asserts nothing, so
+    dropping garbage is the fail-closed reading (stored documents cannot carry
+    one past validation; programmatically built layers can). Rule 8 coercion
+    applies exactly as it would to a declared control_mode.
+    """
+    sp = layer.profile.raw.get("semantic_profile")
+    container = sp if isinstance(sp, dict) else layer.profile.raw
+    cs = container.get("capability_semantics")
+    if not isinstance(cs, dict) or "control_mode" not in cs:
+        return None, None
+    value = cs["control_mode"]
+    try:
+        mode = ControlMode(value)
+    except (ValueError, TypeError):
+        return None, (
+            f"{layer.profile.entity_id}: capability_semantics.control_mode {value!r} "
+            "is not a valid control_mode; capability hint ignored (Spec 4)"
+        )
+    human_authored = layer.profile.metadata.source in (
+        MetadataOrigin.DEVELOPER,
+        MetadataOrigin.USER,
+    )
+    if (
+        not human_authored
+        and mode == ControlMode.AUTONOMOUS
+        and not _is_confirmed(layer.profile, "capability_semantics.control_mode")
+    ):
+        return ControlMode.CONFIRM, (
+            f"{layer.profile.entity_id}: unconfirmed {layer.profile.metadata.source.value} "
+            "profile asserted capability_semantics.control_mode: autonomous; read as "
+            "confirm (Spec 5.4 Rule 8)"
+        )
+    return mode, None
+
+
 def _coerced_triggers(layer: Layer, domain: str) -> tuple[TriggersAutomations, str | None]:
     """Apply the helper-domain coercion of Spec 5.4 Rule 9."""
     profile = layer.profile
@@ -348,12 +398,22 @@ class ConflictResolver:
     ) -> ControlMode | None:
         candidates: list[_Candidate] = []
         for layer in layers:
-            if not layer.profile.declared("operational_boundaries.control_mode"):
+            if layer.profile.declared("operational_boundaries.control_mode"):
+                mode, warning = _coerced_control_mode(layer)
+                if warning:
+                    resolution.warnings.append(warning)
+                candidates.append(_Candidate(layer, mode))
                 continue
-            mode, warning = _coerced_control_mode(layer)
-            if warning:
-                resolution.warnings.append(warning)
-            candidates.append(_Candidate(layer, mode))
+            # Spec 4 capability hint: an integration-scoped profile declaring
+            # capability_semantics.control_mode but no operational_boundaries
+            # control_mode contributes the hint as its Rule A declaration. Other
+            # scopes never consult capability_semantics.
+            if layer.level == "integration":
+                hint, warning = _capability_hint_mode(layer)
+                if warning:
+                    resolution.warnings.append(warning)
+                if hint is not None:
+                    candidates.append(_Candidate(layer, hint, capability_hint=True))
         if not candidates:
             return None
 
@@ -405,6 +465,21 @@ class ConflictResolver:
             reason = f"Rule A: most restrictive value wins ({effective.value})"
 
         distinct = {c.value for c in candidates}
+        if winner.capability_hint:
+            note = (
+                "value from capability_semantics.control_mode on the integration "
+                "profile (capability hint, Spec 4)"
+            )
+            if len(distinct) > 1:
+                reason = f"{reason}; {note}"
+            else:
+                # Spec 9.5 attaches conflict_resolution only to genuine
+                # conflicts, so a hint winning uncontested is surfaced as a
+                # warning instead of silently reading as an operational_
+                # boundaries declaration.
+                resolution.warnings.append(
+                    f"{winner.layer.profile.entity_id}: control_mode {note}"
+                )
         resolution.explanations.append(
             FieldExplanation(
                 field_path="operational_boundaries.control_mode",

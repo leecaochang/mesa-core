@@ -299,6 +299,183 @@ def test_rule_d_origin_authority_breaks_equal_scope_tie() -> None:
     assert effective.operational_boundaries.side_effect_scope == "entity_only"
 
 
+# ------------------------------------------------------- device scope (MESA 1.1)
+
+
+def test_rule_d_device_scope_beats_area_integration_domain() -> None:
+    effective, res = resolve(
+        "sensor.x",
+        Layer("device", make_profile("abc123", boundaries={"reversibility_cost": "high"})),
+        Layer("area", make_profile("area.hall", boundaries={"reversibility_cost": "moderate"})),
+        Layer("integration", make_profile("hue", origin="developer", boundaries={"reversibility_cost": "trivial"})),
+        Layer("domain", make_profile("sensor", origin="developer", boundaries={"reversibility_cost": "none"})),
+    )
+    assert effective.operational_boundaries.reversibility_cost == "high"
+    entry = next(
+        e for e in res.explanations if e.field_path == "operational_boundaries.reversibility_cost"
+    )
+    assert entry.provided_by_level == "device"
+
+
+def test_rule_d_entity_beats_device_scope() -> None:
+    effective, _ = resolve(
+        "sensor.x",
+        Layer("entity", make_profile("sensor.x", boundaries={"reversibility_cost": "none"})),
+        Layer("device", make_profile("abc123", boundaries={"reversibility_cost": "high"})),
+    )
+    assert effective.operational_boundaries.reversibility_cost == "none"
+
+
+def test_rule_a_device_scope_tightens_freely() -> None:
+    effective, _ = resolve(
+        "light.strip",
+        Layer("device", make_profile("abc123", boundaries={"control_mode": "confirm"})),
+        Layer("integration", make_profile("hue", origin="developer", boundaries={"control_mode": "autonomous"})),
+    )
+    assert effective.operational_boundaries.control_mode == ControlMode.CONFIRM
+
+
+def test_rule_a_override_rejected_at_device_scope() -> None:
+    # The loosening override is entity-only (Spec 5.7 Rule A); a device-scope
+    # profile declaring it is malformed and the inherited confirm stands.
+    override = make_profile(
+        "abc123",
+        origin="user",
+        boundaries={
+            "control_mode": "autonomous",
+            "override_control_mode": True,
+            "control_reason": "operator wants the whole device autonomous",
+        },
+    )
+    effective, res = resolve(
+        "media_player.x",
+        Layer("device", override),
+        Layer("domain", make_profile("media_player", origin="developer", boundaries={"control_mode": "confirm"})),
+    )
+    assert effective.operational_boundaries.control_mode == ControlMode.CONFIRM
+    assert any("override_control_mode is malformed" in w for w in res.warnings)
+
+
+def test_rule_b_override_rejected_at_device_scope() -> None:
+    override = make_profile(
+        "abc123",
+        origin="user",
+        boundaries={
+            "triggers_automations": "none",
+            "override_triggers_automations": True,
+            "human_reason": "no automations reference this device",
+        },
+    )
+    effective, res = resolve(
+        "input_boolean.flag",
+        Layer("device", override),
+        Layer("domain", make_profile("input_boolean", origin="developer", boundaries={"triggers_automations": "likely"})),
+    )
+    assert effective.operational_boundaries.triggers_automations == TriggersAutomations.LIKELY
+    assert any("override_triggers_automations is malformed" in w for w in res.warnings)
+
+
+# ------------------------------------------- capability hint (Spec 4, MESA 1.1)
+
+
+def make_capability_profile(
+    name: str,
+    hint: str,
+    origin: str = "developer",
+    boundaries: dict[str, Any] | None = None,
+) -> SemanticProfile:
+    mo: dict[str, Any] = {"source": origin}
+    if origin == "inferred_ai":
+        mo |= {"confidence": 0.9, "generated_at": "2026-06-01T00:00:00+00:00"}
+    sp: dict[str, Any] = {
+        "metadata_origin": mo,
+        "capability_semantics": {"control_mode": hint},
+    }
+    if boundaries is not None:
+        sp["operational_boundaries"] = boundaries
+    return SemanticProfile.from_dict(name, {"semantic_profile": sp})
+
+
+def test_capability_hint_contributes_when_boundaries_silent() -> None:
+    effective, res = resolve(
+        "light.x",
+        Layer("integration", make_capability_profile("hue", "confirm")),
+        Layer("domain", make_profile("light", origin="developer", boundaries={"control_mode": "autonomous"})),
+    )
+    assert effective.operational_boundaries.control_mode == ControlMode.CONFIRM
+    entry = next(
+        e for e in res.explanations if e.field_path == "operational_boundaries.control_mode"
+    )
+    assert entry.provided_by_level == "integration"
+    assert entry.conflict and "capability" in (entry.conflict_resolution or "")
+
+
+def test_capability_hint_inert_when_boundaries_declare() -> None:
+    # operational_boundaries.control_mode is the integration profile's
+    # contribution; the hint asserts nothing alongside it.
+    effective, res = resolve(
+        "light.x",
+        Layer("integration", make_capability_profile("hue", "prohibited", boundaries={"control_mode": "confirm"})),
+    )
+    assert effective.operational_boundaries.control_mode == ControlMode.CONFIRM
+    assert not any("capability" in w for w in res.warnings)
+
+
+def test_capability_hint_never_loosens() -> None:
+    effective, _ = resolve(
+        "light.x",
+        Layer("integration", make_capability_profile("hue", "autonomous")),
+        Layer("entity", make_profile("light.x", boundaries={"control_mode": "confirm"})),
+    )
+    assert effective.operational_boundaries.control_mode == ControlMode.CONFIRM
+
+
+def test_capability_hint_ignored_outside_integration_scope() -> None:
+    # capability_semantics on any non-integration layer never participates.
+    effective, _ = resolve(
+        "light.x",
+        Layer("entity", make_capability_profile("light.x", "prohibited")),
+        Layer("domain", make_profile("light", origin="developer", boundaries={"control_mode": "autonomous"})),
+    )
+    assert effective.operational_boundaries.control_mode == ControlMode.AUTONOMOUS
+
+
+def test_capability_hint_uncontested_win_surfaces_warning() -> None:
+    effective, res = resolve(
+        "light.x",
+        Layer("integration", make_capability_profile("hue", "confirm")),
+    )
+    assert effective.operational_boundaries.control_mode == ControlMode.CONFIRM
+    entry = next(
+        e for e in res.explanations if e.field_path == "operational_boundaries.control_mode"
+    )
+    assert not entry.conflict
+    assert any("capability_semantics.control_mode" in w for w in res.warnings)
+
+
+def test_capability_hint_malformed_value_ignored_with_warning() -> None:
+    # Stored documents cannot carry a malformed hint past validation, but a
+    # programmatically built layer can; it must be dropped, not resolved.
+    profile = make_profile("hue", origin="developer")
+    profile.raw = {"semantic_profile": {"capability_semantics": {"control_mode": "banana"}}}
+    effective, res = resolve(
+        "light.x",
+        Layer("integration", profile),
+        Layer("domain", make_profile("light", origin="developer", boundaries={"control_mode": "autonomous"})),
+    )
+    assert effective.operational_boundaries.control_mode == ControlMode.AUTONOMOUS
+    assert any("capability hint ignored" in w for w in res.warnings)
+
+
+def test_capability_hint_rule_8_coercion_for_inferred_origin() -> None:
+    effective, res = resolve(
+        "light.x",
+        Layer("integration", make_capability_profile("hue", "autonomous", origin="inferred_ai")),
+    )
+    assert effective.operational_boundaries.control_mode == ControlMode.CONFIRM
+    assert any("Rule 8" in w for w in res.warnings)
+
+
 # ---------------------------------------------------------------- Rule E
 
 

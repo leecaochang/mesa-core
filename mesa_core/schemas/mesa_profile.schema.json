@@ -193,8 +193,22 @@
             "entity",
             "domain",
             "integration",
-            "area"
+            "area",
+            "device"
           ]
+        },
+        "capability_semantics": {
+          "type": "object",
+          "properties": {
+            "control_mode": {
+              "enum": [
+                "autonomous",
+                "confirm",
+                "read_only",
+                "prohibited"
+              ]
+            }
+          }
         },
         "profile_valid_for": {
           "type": "object",
