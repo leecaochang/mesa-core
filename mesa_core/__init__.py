@@ -24,6 +24,7 @@ from mesa_core.portability import (
 from mesa_core.privacy import AccessDecision, CallerContext, PrivacyEnforcer
 from mesa_core.profile import (
     DOMAIN_SAFETY_BASELINE,
+    HA_TARGET_SELECTOR_KEYS,
     HELPER_DOMAINS,
     ControlMode,
     FreshnessReport,
@@ -49,6 +50,7 @@ __version__ = "1.3.0"
 
 __all__ = [
     "DOMAIN_SAFETY_BASELINE",
+    "HA_TARGET_SELECTOR_KEYS",
     "HELPER_DOMAINS",
     "AccessDecision",
     "CallerContext",

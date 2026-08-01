@@ -22,7 +22,7 @@ from typing import Any
 
 from mesa_core.exceptions import MesaValidationError
 from mesa_core.inheritance import InheritanceResolver
-from mesa_core.profile import HA_TARGET_SELECTOR_KEYS, TriggersAutomations
+from mesa_core.profile import HA_AUTOMATION_SELECTOR_KEYS, TriggersAutomations
 from mesa_core.store import ProfileStore
 
 # HA configs use singular and plural section keys depending on age and editor.
@@ -35,7 +35,7 @@ _SECTION_KEYS = {
 # Selector keys that reference entities indirectly (device triggers/conditions,
 # and the target blocks of purpose-specific triggers). Only the host can
 # resolve these against the HA registries.
-_TARGET_KEYS = HA_TARGET_SELECTOR_KEYS
+_TARGET_KEYS = HA_AUTOMATION_SELECTOR_KEYS
 
 
 @dataclass

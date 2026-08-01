@@ -94,12 +94,26 @@ HELPER_DOMAINS: frozenset[str] = frozenset(
     }
 )
 
-# Home Assistant target selectors: keys that name what an action acts on
-# instead of how. Each can expand to entities other than the one named, and
-# only the host can resolve them, so the enforcer refuses to evaluate a call
-# carrying one (mesa-core decides policy per entity) and TriggerValidator asks
-# the host to expand them. Shared so the two cannot drift apart.
-HA_TARGET_SELECTOR_KEYS: tuple[str, ...] = ("area_id", "device_id", "floor_id", "label_id")
+# Home Assistant service-action targets: keys that name what an action acts on
+# instead of how. Each can reach entities other than the one being evaluated,
+# and only the host can resolve them, so the enforcer refuses a call carrying
+# one (mesa-core decides policy per entity).
+HA_TARGET_SELECTOR_KEYS: tuple[str, ...] = (
+    "area_id",
+    "config_entry_id",
+    "device_id",
+    "floor_id",
+    "label_id",
+)
+
+# The subset an automation config can use to reference entities indirectly
+# (device triggers and conditions, and the target blocks of purpose-specific
+# triggers). A config entry is a service-action target, not something an
+# automation references, so it is absent here. Kept beside the set above so the
+# difference is deliberate and visible rather than a drift.
+HA_AUTOMATION_SELECTOR_KEYS: tuple[str, ...] = tuple(
+    key for key in HA_TARGET_SELECTOR_KEYS if key != "config_entry_id"
+)
 
 # Built-in domain safety baseline (Spec 5.8). Applies only when an entity has no
 # profile at any inheritance level and no deployment_defaults are configured.

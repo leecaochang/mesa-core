@@ -1124,93 +1124,116 @@ register_mesa_tools(
     get_validity_context=get_validity_context
 )
 
-# Wrap your service call handler with MESA enforcement
-@app.tool()
-# Service parameters arrive as one explicit dict, not **kwargs: neither
-# supported server accepts a variadic tool function. Standalone FastMCP
-# rejects registration outright ("Functions with **kwargs are not supported as
-# tools"), and the MCP SDK publishes `kwargs` as a required parameter of its
-# own, so a caller could not pass `brightness` at all.
-async def call_ha_service(domain: str, service: str, entity_id: str,
-                          service_data: Optional[dict[str, Any]] = None,
-                          confirmation_token: Optional[dict[str, Any]] = None):
-    # This tool is entity-targeted, so service_data carries service data only.
-    # Home Assistant lets an action name its target as a device, area, floor,
-    # or label, or in a nested `target` block, and any of those can reach
-    # entities this call never evaluated. Reject them here rather than forward
-    # them: a decision covers exactly the entity it was made for. See
-    # "Multi-target calls" below for the multi-entity path.
-    targets = {"entity_id", "device_id", "area_id", "floor_id", "label_id", "target"}
-    stray = targets & set(service_data or {})
-    if stray:
-        raise MesaEnforcementError(
-            f"service_data must not carry target fields {sorted(stray)}; "
-            "this tool acts on the entity_id argument"
-        )
+# Wrap your service call handler with MESA enforcement. This is
+# examples/ha_service_tool.py, imported and exercised by the test suite:
+# registered against both FastMCP lineages, its guard checked against every
+# reserved target key, and this document asserted to embed it verbatim.
+def build_call_ha_service(
+    enforcer: MesaEnforcer,
+    get_caller_context: Callable[[], CallerContext],
+    perform_ha_call: Callable[[str, str, dict[str, Any]], Awaitable[Any]],
+) -> Callable[..., Awaitable[dict[str, Any]]]:
+    """Build the MESA-enforced service tool to register with your server."""
 
-    # Evaluate the MESA profile before calling HA. Pass the REAL parameters: a
-    # declared limit whose parameter is absent from service_params is skipped,
-    # so dropping service_data here silently drops volume, brightness, and
-    # temperature caps (Specification 6.4).
-    result = await enforcer.aevaluate(
-        entity_id=entity_id,
-        service=f"{domain}.{service}",
-        # The validated target goes last regardless, so nothing a caller sends
-        # can displace it. mesa-core also refuses any service_params that name
-        # a different entity or carry a target selector, so a challenge can
-        # never be approved for one entity and executed against another.
-        service_params={**(service_data or {}), "entity_id": entity_id},
-        caller_context=get_caller_context(),
-        current_time=datetime.now(),
-        # On resubmission, the token the user approved. The enforcer verifies
-        # the round-trip and that the parameters still match the approved ones
-        # (Specification 6.6).
-        confirmation_token=confirmation_token,
-    )
-    if not result.allowed:
-        if result.confirmation_challenge is not None:
-            # control_mode: confirm. Not a refusal: hand the challenge back to
-            # the agent, which shows the user what is about to happen and
-            # resubmits this call with the approved token. Raising here instead
-            # turns every confirm entity into a prohibited one.
-            return {"requires_confirmation": result.confirmation_challenge}
-        raise MesaEnforcementError(result.reason)
-    # Proceed with HA API call
-    ...
+    async def call_ha_service(
+        domain: str,
+        service: str,
+        entity_id: str,
+        service_data: dict[str, Any] | None = None,
+        confirmation_token: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        # This tool is entity-targeted, so service_data carries service data
+        # only. Home Assistant also lets an action name its target as a device,
+        # area, floor, label, or config entry, or in a nested `target` block,
+        # and any of those can reach entities this call never evaluated. Reject
+        # them rather than forward them: a decision covers exactly the entity it
+        # was made for. See "Multi-target calls" for the multi-entity path.
+        stray = RESERVED_TARGET_KEYS & set(service_data or {})
+        if stray:
+            raise MesaEnforcementError(
+                f"service_data must not carry target fields {sorted(stray)}; "
+                "this tool acts on the entity_id argument"
+            )
+
+        # Pass the REAL parameters: a declared limit whose parameter is absent
+        # from service_params is skipped, so dropping service_data here would
+        # silently drop volume, brightness, and temperature caps (Spec 6.4).
+        # The validated target goes last so nothing a caller sends displaces it.
+        result = await enforcer.aevaluate(
+            entity_id=entity_id,
+            service=f"{domain}.{service}",
+            service_params={**(service_data or {}), "entity_id": entity_id},
+            caller_context=get_caller_context(),
+            current_time=datetime.now(),
+            # On resubmission, the token the user approved. The enforcer
+            # verifies the round-trip and that the parameters still match the
+            # approved ones (Spec 6.6).
+            confirmation_token=confirmation_token,
+        )
+        if not result.allowed:
+            if result.confirmation_challenge is not None:
+                # control_mode: confirm. Not a refusal: hand the challenge back
+                # to the agent, which shows the user what is about to happen and
+                # resubmits this call with the approved token. Raising here
+                # instead turns every confirm entity into a prohibited one.
+                return {"requires_confirmation": result.confirmation_challenge}
+            raise MesaEnforcementError(result.reason)
+
+        call_data = {"entity_id": entity_id, **(service_data or {})}
+        return {"ok": True, "result": await perform_ha_call(domain, service, call_data)}
+
+    return call_ha_service
+
+app.tool()(build_call_ha_service(enforcer, get_caller_context, perform_ha_call))
 ```
 
 **Multi-target calls.** A MESA decision covers exactly the entity it was
 evaluated for. Home Assistant actions routinely target more than one, and
-Home Assistant itself recommends `device_id` for device-level actions, so this
-is ordinary integration work rather than an exotic case. `MesaEnforcer` refuses
-a call whose parameters carry an alternate target, because it cannot resolve a
-selector and must not approve a decision that would reach entities it never
-considered. The host owns that expansion:
+Home Assistant itself recommends `device_id` for device-level actions and
+`config_entry_id` for config-entry-level ones, so this is ordinary integration
+work rather than an exotic case. `MesaEnforcer` refuses a call whose parameters
+carry an alternate target, because it cannot resolve a selector and must not
+approve a decision that would reach entities it never considered. The host owns
+that expansion:
 
 1. **Separate target from data.** Take `entity_id`, `device_id`, `area_id`,
-   `floor_id`, `label_id`, and any nested `target` block out of the service
-   data. What remains is service data, and it is what carries the parameters
-   declared limits are written against.
+   `floor_id`, `label_id`, `config_entry_id`, and any nested `target` block out
+   of the service data. What remains is service data, and it is what carries the
+   parameters declared limits are written against.
 2. **Expand every selector to entities** through the HA registries, the same
    knowledge `expand_target` supplies to `TriggerValidator`. Remember that an
-   entity inherits its device's area, so an area selector reaches entities
-   whose own `area_id` is unset.
-3. **Evaluate each resolved entity** with the shared service data. Policy
+   entity inherits its device's area, so an area selector reaches entities whose
+   own `area_id` is unset.
+3. **Require the expansion to be complete, and deny otherwise.** Home
+   Assistant's target extraction reports what it could not resolve alongside
+   what it could. Treat a failed expansion, an unknown device, area, floor,
+   label, or config entry, or an empty resolved set as a denial. An empty set is
+   the trap: "every decision allowed" is vacuously true of no decisions, so an
+   unresolvable target would otherwise read as approval.
+4. **Evaluate each resolved entity** with the shared service data. Policy
    differs per entity: a `light.turn_on` across an area may be autonomous for
    most lights and `confirm` or `prohibited` for one.
-4. **Require every decision to allow before acting.** A partial call is the
+5. **Require every decision to allow before acting.** A partial call is the
    dangerous outcome: it executes against the permitted entities and leaves the
    agent believing the whole action succeeded. Deny the action and report which
    entities blocked it.
-5. **Confirm per entity.** Each `confirm` entity produces its own challenge
-   bound to its own parameters, and each token is single-use and matched
-   against exactly the entity, service, and parameters challenged. Present them
-   together if you like, but resubmit each with its own token; there is no
-   token that approves a group.
+6. **Execute against the frozen set you evaluated,** listing those entity IDs
+   explicitly. Forwarding the original area or label selector to Home Assistant
+   reopens the gap between check and execution: membership can change in
+   between, and the call would reach entities no decision covered.
+7. **Confirm per entity.** Each `confirm` entity produces its own challenge
+   bound to its own parameters, and each token is single-use and matched against
+   exactly the entity, service, and parameters challenged. Present them together
+   if you like, but resubmit each with its own token; there is no token that
+   approves a group.
 
-The equivalent shortcut, evaluating one entity and executing against the whole
-target, is what the enforcer refuses: the operator would approve what they were
-shown and the call would act on what they were not.
+**Actions with no entity representation.** Some device-level and
+config-entry-level actions genuinely address no entity. MESA has nothing to say
+about them: its policy vocabulary is per entity, so there is no profile to
+consult and no decision to make. Deny them at the MESA boundary and gate them
+with your own authorisation, rather than expanding them to an empty entity set
+and reading that as approval. A future MESA version may define device-scope
+enforcement; until it does, silence is not permission.
 
 ### 6.3 Framework Adapters
 
