@@ -46,9 +46,9 @@ def _entity_id_set(value: Any) -> frozenset[str] | None:
     A bare string is refused rather than iterated: ``"light.x"`` is itself a
     collection of characters, so accepting it would report every real entity as
     removed. Any other iterable of strings is materialised here, which is what
-    makes a generator safe to return from the host callback: the set is read
-    more than once during evaluation, and a one-shot value would read as an
-    empty registry the second time.
+    makes a generator safe to return from the host callback: the callback runs
+    once per entity, so a one-shot value would be exhausted by the first entity
+    of a query and read as an empty registry for the rest of the page.
     """
     if isinstance(value, str) or not isinstance(value, Iterable):
         return None
@@ -607,9 +607,10 @@ def register_mesa_tools(
     ``integration_version`` means the version of the integration that created
     THAT entity: a deployment runs many integrations at different versions, so
     one request-wide version would be compared against profiles pinned to
-    other integrations. ``known_entity_ids`` must be a reusable collection (a
-    set or list, not a generator) and must be the deployment's complete entity
-    registry, since anything missing from it reads as a removed entity. Without
+    other integrations. ``known_entity_ids`` may be any iterable of entity IDs
+    except a bare string (mesa-core materialises it), and must be the
+    deployment's complete entity registry, since anything missing from it reads
+    as a removed entity. The callback must be synchronous. Without
     the callback these triggers cannot be evaluated and an invalidated profile
     keeps reporting ``staleness_status: current`` (Spec 5.4);
     ``review_after_days`` is evaluated either way.

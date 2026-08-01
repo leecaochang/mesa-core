@@ -286,9 +286,12 @@ class SemanticProfile:
         """Declared confidence, or 1.0 for trusted origins and 0.0 otherwise."""
         ...
 
-    # known_entity_ids is a Collection, not an Iterable: it is read more than
-    # once per evaluation, so a one-shot iterable would read as an empty
-    # registry the second time and invent removal warnings.
+    # known_entity_ids is a Collection, not an Iterable: these methods can each
+    # be called with the same value (and freshness() evaluates once for both),
+    # so a one-shot iterable would be exhausted by the first call and read as
+    # an empty registry afterwards, inventing removal warnings. The host
+    # callback is looser: it may return any iterable, which mesa-core
+    # materialises before use.
     def freshness(self, now: Optional[datetime] = None, *,
                   known_entity_ids: Optional[Collection[str]] = None,
                   integration_version: Optional[str] = None,
@@ -969,11 +972,25 @@ from mesa_core.lease import LeaseManager  # mesa-core 1.1+
 from mesa_core.mcp import register_mesa_tools
 from mesa_core.exceptions import MesaEnforcementError
 from mesa_core.privacy import CallerContext
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
-from typing import Optional
+from typing import Any, Optional
 from datetime import datetime
 
-app = FastMCP("my-ha-mcp-server")
+# Authentication is YOUR job, not mesa-core's: Specification 9.1 requires a
+# Level 3 server to reject unauthenticated requests with HA-equivalent
+# authentication, and mesa-core never sees your transport. Gate it here, at
+# construction, so an unauthenticated request never reaches a MESA tool.
+# Raising from the caller-context callback instead does not work: the handlers
+# catch exceptions and answer server_error, not the unauthorized envelope of
+# Specification 9.6.
+app = FastMCP(
+    "my-ha-mcp-server",
+    token_verifier=MyTokenVerifier(),        # verifies the bearer token
+    auth=AuthSettings(issuer_url=..., resource_server_url=...),
+)
+# On standalone FastMCP the equivalent is middleware: `app.add_middleware(...)`.
+# Its `middleware` attribute is a list, not a decorator.
 
 # Initialise storage
 store = ProfileStore(backend=SqliteBackend("/config/mesa/mesa.db"))
@@ -1031,28 +1048,6 @@ enforcer = MesaEnforcer(store=store, resolver=resolver)
 # profiles to read, so the protected/critical denial check (Spec 21.5) silently
 # grants leases it should deny.
 lease_manager = LeaseManager(store)
-
-# Authentication is YOUR job, not mesa-core's: Specification 9.1 requires
-# Level 3 servers to reject unauthenticated requests with HA-equivalent
-# authentication, and mesa-core never sees your transport. Reject there,
-# BEFORE a tool handler runs. Raising from the caller-context callback does
-# not work: the handlers catch exceptions and answer server_error, not the
-# unauthorized envelope of Specification 9.6.
-#
-# How you gate depends on which server you run. With the MCP Python SDK's
-# FastMCP (imported above), pass a token verifier and auth settings at
-# construction:
-#
-#     from mcp.server.auth.settings import AuthSettings
-#     app = FastMCP(
-#         "my-ha-mcp-server",
-#         token_verifier=MyTokenVerifier(),      # verifies the bearer token
-#         auth=AuthSettings(issuer_url=..., resource_server_url=...),
-#     )
-#
-# With standalone FastMCP, register middleware instead
-# (`app.add_middleware(...)`; `app.middleware` is a list, not a decorator).
-# Either way the unauthenticated request never reaches a MESA tool.
 
 # Caller context function (host server provides this). mesa-core applies
 # access_roles before surfacing any profile, so without this the base privacy
@@ -1113,16 +1108,22 @@ register_mesa_tools(
 
 # Wrap your service call handler with MESA enforcement
 @app.tool()
+# Service parameters arrive as one explicit dict, not **kwargs: neither
+# supported server accepts a variadic tool function. Standalone FastMCP
+# rejects registration outright ("Functions with **kwargs are not supported as
+# tools"), and the MCP SDK publishes `kwargs` as a required parameter of its
+# own, so a caller could not pass `brightness` at all.
 async def call_ha_service(domain: str, service: str, entity_id: str,
-                          confirmation_token: Optional[dict] = None, **kwargs):
-    # Evaluate MESA profile before calling HA. Pass the REAL parameters: a
+                          service_data: Optional[dict[str, Any]] = None,
+                          confirmation_token: Optional[dict[str, Any]] = None):
+    # Evaluate the MESA profile before calling HA. Pass the REAL parameters: a
     # declared limit whose parameter is absent from service_params is skipped,
-    # so omitting kwargs silently drops volume, brightness, and temperature
-    # caps (Specification 6.4).
+    # so dropping service_data here silently drops volume, brightness, and
+    # temperature caps (Specification 6.4).
     result = await enforcer.aevaluate(
         entity_id=entity_id,
         service=f"{domain}.{service}",
-        service_params={"entity_id": entity_id, **kwargs},
+        service_params={"entity_id": entity_id, **(service_data or {})},
         caller_context=get_caller_context(),
         current_time=datetime.now(),
         # On resubmission, the token the user approved. The enforcer verifies

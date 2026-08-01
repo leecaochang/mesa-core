@@ -508,4 +508,4 @@ Upon receiving a preemption notification, the preempted agent MUST follow its de
 
 ---
 
-*MESA - Metadata and Environment Semantics for Agents. Version 1.0. Enrichment specification. See also: MESA Overview, MESA Specification (Core), MESA Getting Started Guide, and mesa-core Module Proposal. Discussion and contributions are welcome via GitHub Issues.*
+*MESA - Metadata and Environment Semantics for Agents. Version 1.1. Enrichment specification. See also: MESA Overview, MESA Specification (Core), MESA Getting Started Guide, and mesa-core Module Proposal. Discussion and contributions are welcome via GitHub Issues.*
