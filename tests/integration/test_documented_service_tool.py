@@ -173,6 +173,80 @@ def test_documented_handler_is_the_only_service_tool_in_the_module() -> None:
     assert len(re.findall(r"async def call_ha_service\(", MODULE_DOC.read_text())) == 1
 
 
+def test_the_documented_block_executes_on_its_own() -> None:
+    """The embedded region must carry its own imports and constants.
+
+    Matching the file's text is not enough: the marked region used to start
+    below the imports and the RESERVED_TARGET_KEYS constant, so it matched
+    while referencing four names the document never defined. Executing it in an
+    empty namespace is what proves a reader can paste it and have it work.
+    """
+    source = EXAMPLE_PATH.read_text()
+    marked = source.split("# --- docs:call_ha_service:start\n")[1]
+    marked = marked.split("# --- docs:call_ha_service:end")[0]
+    namespace: dict[str, Any] = {}
+    exec(compile(marked, "<documented block>", "exec"), namespace)
+    assert callable(namespace["build_call_ha_service"])
+    assert namespace["RESERVED_TARGET_KEYS"]
+
+
+def test_evaluated_data_cannot_change_before_execution() -> None:
+    """The call that executes must be the call that was approved.
+
+    service_data belongs to the caller and evaluation suspends at an await, so
+    re-reading it afterwards let a concurrent mutation swap the target: the
+    enforcer saw light.x while Home Assistant would have been asked for
+    lock.front_door.
+    """
+    decided = asyncio.Event()
+    gate = asyncio.Event()
+    forwarded: dict[str, Any] = {}
+
+    class GatedEnforcer(MesaEnforcer):
+        async def aevaluate(self, *args: Any, **kwargs: Any) -> Any:
+            result = await super().aevaluate(*args, **kwargs)
+            decided.set()
+            await gate.wait()  # suspended after the decision, before forwarding
+            return result
+
+    store = ProfileStore(backend=MemoryBackend())
+    store.set(
+        "light.x",
+        SemanticProfile.from_dict(
+            "light.x",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {"source": "user"},
+                    "operational_boundaries": {
+                        "control_mode": "autonomous",
+                        "enforcement_mode": "enforced",
+                    },
+                }
+            },
+        ),
+    )
+
+    async def perform_ha_call(domain: str, service: str, data: dict[str, Any]) -> str:
+        forwarded.update(data)
+        return "done"
+
+    tool = example.build_call_ha_service(
+        GatedEnforcer(store=store, mode="enforced"), lambda: CALLER, perform_ha_call
+    )
+
+    async def scenario() -> None:
+        caller_data = {"brightness": 100}
+        task = asyncio.create_task(tool("light", "turn_on", "light.x", caller_data))
+        await decided.wait()
+        caller_data["entity_id"] = "lock.front_door"
+        caller_data["brightness"] = 255
+        gate.set()
+        await task
+
+    asyncio.run(scenario())
+    assert forwarded == {"entity_id": "light.x", "brightness": 100}
+
+
 # ------------------------------------- why the signature is explicit, not **kwargs
 
 

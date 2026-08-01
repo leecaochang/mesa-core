@@ -1124,10 +1124,37 @@ register_mesa_tools(
     get_validity_context=get_validity_context
 )
 
-# Wrap your service call handler with MESA enforcement. This is
-# examples/ha_service_tool.py, imported and exercised by the test suite:
-# registered against both FastMCP lineages, its guard checked against every
-# reserved target key, and this document asserted to embed it verbatim.
+# Register the MESA-enforced service tool (see "The service tool" below).
+app.tool()(build_call_ha_service(enforcer, get_caller_context, perform_ha_call))
+```
+
+**The service tool.** This is `examples/ha_service_tool.py` in full, embedded
+verbatim. The test suite imports that file, registers the tool against both
+supported FastMCP lineages, asserts its published schema, exercises the guard
+against every reserved target key, and covers the allowed, confirm, and
+prohibited paths; a further test executes the block below in an empty namespace
+and asserts this document matches the file. Copyable text that no test runs is
+how several enforcement gaps reached this project, so the two are one object.
+
+```python
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable
+from datetime import datetime
+from typing import Any
+
+from mesa_core import HA_TARGET_SELECTOR_KEYS, MesaEnforcer
+from mesa_core.exceptions import MesaEnforcementError
+from mesa_core.privacy import CallerContext
+
+# Every way a Home Assistant action can name what it acts on. An entity-targeted
+# tool accepts none of them in its service data: each can reach entities this
+# call never evaluated, and only the host can resolve one.
+RESERVED_TARGET_KEYS: frozenset[str] = frozenset(
+    {"entity_id", "target", *HA_TARGET_SELECTOR_KEYS}
+)
+
+
 def build_call_ha_service(
     enforcer: MesaEnforcer,
     get_caller_context: Callable[[], CallerContext],
@@ -1142,13 +1169,20 @@ def build_call_ha_service(
         service_data: dict[str, Any] | None = None,
         confirmation_token: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        # This tool is entity-targeted, so service_data carries service data
+        # Snapshot the caller's data ONCE, before validating it. Everything
+        # below reads this copy: the dict belongs to the caller, evaluation
+        # suspends at an await, and re-reading the original afterwards would
+        # let a concurrent mutation forward a call that was never the one
+        # evaluated. Check, evaluate, and execute must all see the same bytes.
+        data = dict(service_data or {})
+
+        # This tool is entity-targeted, so service data carries service data
         # only. Home Assistant also lets an action name its target as a device,
         # area, floor, label, or config entry, or in a nested `target` block,
         # and any of those can reach entities this call never evaluated. Reject
         # them rather than forward them: a decision covers exactly the entity it
         # was made for. See "Multi-target calls" for the multi-entity path.
-        stray = RESERVED_TARGET_KEYS & set(service_data or {})
+        stray = RESERVED_TARGET_KEYS & set(data)
         if stray:
             raise MesaEnforcementError(
                 f"service_data must not carry target fields {sorted(stray)}; "
@@ -1162,7 +1196,7 @@ def build_call_ha_service(
         result = await enforcer.aevaluate(
             entity_id=entity_id,
             service=f"{domain}.{service}",
-            service_params={**(service_data or {}), "entity_id": entity_id},
+            service_params={**data, "entity_id": entity_id},
             caller_context=get_caller_context(),
             current_time=datetime.now(),
             # On resubmission, the token the user approved. The enforcer
@@ -1179,12 +1213,17 @@ def build_call_ha_service(
                 return {"requires_confirmation": result.confirmation_challenge}
             raise MesaEnforcementError(result.reason)
 
-        call_data = {"entity_id": entity_id, **(service_data or {})}
+        # The same snapshot, and the validated target last here too: the call
+        # that executes must be the call that was approved.
+        call_data = {**data, "entity_id": entity_id}
         return {"ok": True, "result": await perform_ha_call(domain, service, call_data)}
 
     return call_ha_service
 
-app.tool()(build_call_ha_service(enforcer, get_caller_context, perform_ha_call))
+
+# Your Home Assistant client. mesa-core never calls HA itself.
+async def perform_ha_call(domain: str, service: str, data: dict[str, Any]) -> Any:
+    ...
 ```
 
 **Multi-target calls.** A MESA decision covers exactly the entity it was
@@ -1228,12 +1267,18 @@ that expansion:
    approves a group.
 
 **Actions with no entity representation.** Some device-level and
-config-entry-level actions genuinely address no entity. MESA has nothing to say
-about them: its policy vocabulary is per entity, so there is no profile to
-consult and no decision to make. Deny them at the MESA boundary and gate them
-with your own authorisation, rather than expanding them to an empty entity set
-and reading that as approval. A future MESA version may define device-scope
-enforcement; until it does, silence is not permission.
+config-entry-level actions genuinely address no entity, and enforcement has no
+answer for them. Be precise about why, because MESA 1.1 does have device-scoped
+profiles: a device profile is resolved through inheritance and governs the
+entities that device owns, so it already shapes enforcement for every one of
+them. What it does not do is give `MesaEnforcer` a way to decide a call that
+names a device or config entry and no entity at all. Enforcement evaluates one
+entity, and there is no entity here to evaluate.
+
+Deny such calls at the MESA boundary and gate them with your own authorisation,
+rather than expanding them to an empty entity set and reading that as approval.
+Direct enforcement of entityless targets may come in a later version; until it
+does, silence is not permission.
 
 ### 6.3 Framework Adapters
 

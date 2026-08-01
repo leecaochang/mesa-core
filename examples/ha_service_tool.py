@@ -12,6 +12,7 @@ the standard library, so it runs here without Home Assistant; substitute your
 own HA client where `perform_ha_call` is injected.
 """
 
+# --- docs:call_ha_service:start
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
@@ -30,7 +31,6 @@ RESERVED_TARGET_KEYS: frozenset[str] = frozenset(
 )
 
 
-# --- docs:call_ha_service:start
 def build_call_ha_service(
     enforcer: MesaEnforcer,
     get_caller_context: Callable[[], CallerContext],
@@ -45,13 +45,20 @@ def build_call_ha_service(
         service_data: dict[str, Any] | None = None,
         confirmation_token: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        # This tool is entity-targeted, so service_data carries service data
+        # Snapshot the caller's data ONCE, before validating it. Everything
+        # below reads this copy: the dict belongs to the caller, evaluation
+        # suspends at an await, and re-reading the original afterwards would
+        # let a concurrent mutation forward a call that was never the one
+        # evaluated. Check, evaluate, and execute must all see the same bytes.
+        data = dict(service_data or {})
+
+        # This tool is entity-targeted, so service data carries service data
         # only. Home Assistant also lets an action name its target as a device,
         # area, floor, label, or config entry, or in a nested `target` block,
         # and any of those can reach entities this call never evaluated. Reject
         # them rather than forward them: a decision covers exactly the entity it
         # was made for. See "Multi-target calls" for the multi-entity path.
-        stray = RESERVED_TARGET_KEYS & set(service_data or {})
+        stray = RESERVED_TARGET_KEYS & set(data)
         if stray:
             raise MesaEnforcementError(
                 f"service_data must not carry target fields {sorted(stray)}; "
@@ -65,7 +72,7 @@ def build_call_ha_service(
         result = await enforcer.aevaluate(
             entity_id=entity_id,
             service=f"{domain}.{service}",
-            service_params={**(service_data or {}), "entity_id": entity_id},
+            service_params={**data, "entity_id": entity_id},
             caller_context=get_caller_context(),
             current_time=datetime.now(),
             # On resubmission, the token the user approved. The enforcer
@@ -82,7 +89,9 @@ def build_call_ha_service(
                 return {"requires_confirmation": result.confirmation_challenge}
             raise MesaEnforcementError(result.reason)
 
-        call_data = {"entity_id": entity_id, **(service_data or {})}
+        # The same snapshot, and the validated target last here too: the call
+        # that executes must be the call that was approved.
+        call_data = {**data, "entity_id": entity_id}
         return {"ok": True, "result": await perform_ha_call(domain, service, call_data)}
 
     return call_ha_service
