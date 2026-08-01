@@ -353,6 +353,43 @@ class MesaEnforcer:
         explanation = self.resolver.explain(entity_id)
         profile = explanation.effective_profile
         warnings = list(explanation.warnings)
+
+        # A target named twice, differently, is contradictory input: policy is
+        # selected from entity_id while the executed call and the confirmation
+        # challenge carry the parameters, so accepting it would evaluate one
+        # entity and act on another. Home Assistant's REST API takes entity_id
+        # inside the service data, which is exactly how a caller-supplied
+        # parameter reaches the wire. Denied rather than reconciled: there is
+        # no safe way to guess which target the operator meant.
+        params_entity = service_params.get("entity_id")
+        if isinstance(params_entity, str) and params_entity != entity_id:
+            reason = (
+                f"contradictory target: service_params names {params_entity!r} but policy "
+                f"was evaluated for {entity_id!r}; pass the target once"
+            )
+            audit_result = EnforcementResult(
+                allowed=False,
+                reason=reason,
+                rule_applied="contradictory_target",
+                entity_id=entity_id,
+                effective_profile=profile,
+                warnings=[*warnings, reason],
+            )
+            emit_audit_event(
+                MesaAuditEvent(
+                    event_type="enforcement_decision",
+                    action=service,
+                    decision="denied",
+                    entity_id=entity_id,
+                    caller_id=caller_context.caller_id if caller_context else None,
+                    roles=caller_context.effective_roles() if caller_context else [],
+                    profile_version=profile.metadata.profile_version,
+                    rule_applied="contradictory_target",
+                    details={"service_params_entity_id": params_entity},
+                ),
+                level=logging.WARNING,
+            )
+            return audit_result
         # Set when a confirmation token is redeemed, so the approval reaches the
         # audit trail the protocol promises (Spec 6.6).
         approved: dict[str, Any] | None = None

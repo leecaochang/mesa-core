@@ -428,3 +428,58 @@ def test_unevaluable_calendar_negate_fails_closed_end_to_end() -> None:
     assert not result.allowed
     assert result.confirmation_challenge is not None
     assert any("fail-closed" in w for w in result.warnings)
+
+
+# --------------- contradictory target in service_params (audit 15 F1)
+
+
+def _confirm_store() -> ProfileStore:
+    store = ProfileStore(backend=MemoryBackend())
+    store.set(
+        "light.x",
+        SemanticProfile.from_dict(
+            "light.x",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {"source": "user"},
+                    "operational_boundaries": {
+                        "control_mode": "confirm",
+                        "enforcement_mode": "enforced",
+                    },
+                }
+            },
+        ),
+    )
+    return store
+
+
+def test_service_params_naming_another_entity_is_denied() -> None:
+    # Policy is selected from entity_id while the executed call and the
+    # confirmation challenge carry service_params, so a mismatch would let an
+    # operator approve one entity and act on another. HA's REST API takes
+    # entity_id inside the service data, so this is a reachable payload.
+    enforcer = MesaEnforcer(store=_confirm_store(), mode="enforced")
+    result = enforcer.evaluate(
+        entity_id="light.x",
+        service="light.turn_on",
+        service_params={"entity_id": "lock.front_door", "brightness": 255},
+    )
+    assert not result.allowed
+    assert result.rule_applied == "contradictory_target"
+    assert "lock.front_door" in result.reason
+    # No challenge: an approvable challenge is exactly what must not be issued.
+    assert result.confirmation_challenge is None
+
+
+def test_matching_or_absent_entity_id_in_service_params_is_unaffected() -> None:
+    enforcer = MesaEnforcer(store=_confirm_store(), mode="enforced")
+    for params in (
+        {"entity_id": "light.x", "brightness": 255},
+        {"brightness": 255},
+        {"entity_id": None},
+    ):
+        result = enforcer.evaluate(
+            entity_id="light.x", service="light.turn_on", service_params=params
+        )
+        assert result.rule_applied != "contradictory_target"
+        assert result.confirmation_challenge is not None

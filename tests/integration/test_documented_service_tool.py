@@ -83,17 +83,36 @@ def test_service_parameters_reach_the_enforcer_call() -> None:
     assert result["service_params"] == {"entity_id": "light.x", "brightness": 255}
 
 
-def test_variadic_handler_is_rejected_by_the_servers() -> None:
-    """Why the documented signature is explicit rather than **kwargs.
+async def variadic_handler(domain: str, **kwargs: Any) -> dict[str, Any]:
+    return {}
+
+
+def test_variadic_handler_is_rejected_by_standalone_fastmcp() -> None:
+    """Half of why the documented signature is explicit rather than **kwargs.
 
     Pins the constraint that made the old example unusable, so a future edit
     reintroducing **kwargs fails here instead of in a host's deployment.
     """
     fastmcp = pytest.importorskip("fastmcp")
 
-    async def variadic(domain: str, **kwargs: Any) -> dict[str, Any]:
-        return {}
-
     server = fastmcp.FastMCP("mesa-doc-test")
     with pytest.raises(ValueError, match="kwargs"):
-        server.tool()(variadic)
+        server.tool()(variadic_handler)
+
+
+def test_variadic_handler_publishes_an_unusable_schema_on_the_mcp_sdk() -> None:
+    """The other half: the SDK accepts **kwargs but publishes it as a parameter.
+
+    Registration succeeding is what made this defect survive review. The
+    schema is the evidence: callers must send a `kwargs` field and still
+    cannot pass a real service parameter such as `brightness`.
+    """
+    pytest.importorskip("mcp.server.fastmcp")
+    from mcp.server.fastmcp import FastMCP
+
+    server = FastMCP("mesa-doc-test")
+    server.tool()(variadic_handler)
+    schema = asyncio.run(server.list_tools())[0].inputSchema
+    assert "kwargs" in schema["properties"]
+    assert "kwargs" in schema.get("required", [])
+    assert "brightness" not in schema["properties"]

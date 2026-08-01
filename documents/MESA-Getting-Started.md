@@ -202,10 +202,15 @@ enforcer = MesaEnforcer(store)
 #  - `service_params` must be the REAL parameters of the call. A declared limit
 #    whose parameter is missing from service_params is skipped, so passing
 #    nothing here silently drops volume, brightness, and temperature caps.
+#  - the validated entity_id goes LAST in the merge. Expanded the other way, a
+#    caller-supplied entity_id would replace the target policy was chosen for,
+#    so the approved confirmation challenge would name a different entity than
+#    the call actually executes against. mesa-core denies that mismatch, but
+#    the merge order is what stops you building it.
 result = enforcer.evaluate(
     entity_id=entity_id,
     service=f"{domain}.{service}",
-    service_params={"entity_id": entity_id, **service_params},
+    service_params={**service_params, "entity_id": entity_id},
     caller_context=caller_ctx,
     current_time=datetime.now()
 )
@@ -227,7 +232,7 @@ The resubmitted call is the same call plus the approved token:
 result = enforcer.evaluate(
     entity_id=entity_id,
     service=f"{domain}.{service}",
-    service_params={"entity_id": entity_id, **service_params},
+    service_params={**service_params, "entity_id": entity_id},
     caller_context=caller_ctx,
     current_time=datetime.now(),
     confirmation_token=approved_token,      # the dict from the approved challenge

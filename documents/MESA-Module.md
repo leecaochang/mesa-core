@@ -972,6 +972,7 @@ from mesa_core.lease import LeaseManager  # mesa-core 1.1+
 from mesa_core.mcp import register_mesa_tools
 from mesa_core.exceptions import MesaEnforcementError
 from mesa_core.privacy import CallerContext
+from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
 from typing import Any, Optional
@@ -979,16 +980,31 @@ from datetime import datetime
 
 # Authentication is YOUR job, not mesa-core's: Specification 9.1 requires a
 # Level 3 server to reject unauthenticated requests with HA-equivalent
-# authentication, and mesa-core never sees your transport. Gate it here, at
-# construction, so an unauthenticated request never reaches a MESA tool.
-# Raising from the caller-context callback instead does not work: the handlers
-# catch exceptions and answer server_error, not the unauthorized envelope of
-# Specification 9.6.
+# authentication, and mesa-core never sees your transport. Gate it at the
+# transport, so an unauthenticated request never reaches a MESA tool. Raising
+# from the caller-context callback instead does not work: the handlers catch
+# exceptions and answer server_error, not Specification 9.6's unauthorized.
+class HomeAssistantTokenVerifier(TokenVerifier):
+    async def verify_token(self, token: str) -> Optional[AccessToken]:
+        # Home Assistant issues bearer access tokens and answers 401 for an
+        # invalid one. Return None on rejection; the SDK turns that into an
+        # unauthorized response before dispatch.
+        user = await hass_client.verify_bearer_token(token)
+        if user is None:
+            return None
+        return AccessToken(token=token, client_id=user.id, scopes=user.scopes)
+
 app = FastMCP(
     "my-ha-mcp-server",
-    token_verifier=MyTokenVerifier(),        # verifies the bearer token
-    auth=AuthSettings(issuer_url=..., resource_server_url=...),
+    token_verifier=HomeAssistantTokenVerifier(),
+    auth=AuthSettings(
+        issuer_url="https://ha.example.org",
+        resource_server_url="https://ha.example.org/mcp",
+    ),
 )
+# This path secures an HTTP transport. `FastMCP.run()` defaults to stdio, where
+# there is no bearer token to verify and the trust boundary is the process
+# itself, so serve over HTTP when you rely on it: `app.run("streamable-http")`.
 # On standalone FastMCP the equivalent is middleware: `app.add_middleware(...)`.
 # Its `middleware` attribute is a list, not a decorator.
 
@@ -1123,7 +1139,12 @@ async def call_ha_service(domain: str, service: str, entity_id: str,
     result = await enforcer.aevaluate(
         entity_id=entity_id,
         service=f"{domain}.{service}",
-        service_params={"entity_id": entity_id, **(service_data or {})},
+        # The validated target wins: expanding service_data last would let a
+        # caller-supplied entity_id replace it, so policy would be chosen for
+        # one entity while the executed call and the approved confirmation
+        # challenge named another. mesa-core denies that mismatch outright,
+        # but do not construct it in the first place.
+        service_params={**(service_data or {}), "entity_id": entity_id},
         caller_context=get_caller_context(),
         current_time=datetime.now(),
         # On resubmission, the token the user approved. The enforcer verifies

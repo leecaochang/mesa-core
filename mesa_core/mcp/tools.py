@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import inspect
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Collection
 from typing import Any
 
 from mesa_core.exceptions import (
@@ -43,22 +43,23 @@ _COMPONENT_DOMAINS = {"automation", "scene", "zone", "person"}
 def _entity_id_set(value: Any) -> frozenset[str] | None:
     """Normalise a host-supplied entity registry, or None when it is unusable.
 
-    A bare string is refused rather than iterated: ``"light.x"`` is itself a
-    collection of characters, so accepting it would report every real entity as
-    removed. Any other iterable of strings is materialised here, which is what
-    makes a generator safe to return from the host callback: the callback runs
-    once per entity, so a one-shot value would be exhausted by the first entity
-    of a query and read as an empty registry for the rest of the page.
+    The registry must be a reusable collection: a set, list, tuple, or
+    anything else that can be iterated more than once. One-shot iterables are
+    refused, because the callback runs once per entity and a host that hands
+    back the same generator every time would have it drained by the first row
+    of a query, leaving every later row to read an empty registry and report
+    entities that exist as removed. Materialising here cannot fix that: by the
+    time the second row arrives the values are already gone.
+
+    A bare string is refused for the same class of reason: ``"light.x"`` is
+    itself a collection of characters, so iterating it would report every real
+    entity as removed.
     """
-    if isinstance(value, str) or not isinstance(value, Iterable):
+    if isinstance(value, str) or not isinstance(value, Collection):
         return None
-    try:
-        items = list(value)
-    except TypeError:
+    if not all(isinstance(item, str) for item in value):
         return None
-    if not all(isinstance(item, str) for item in items):
-        return None
-    return frozenset(items)
+    return frozenset(value)
 
 
 def _component_type(entity_id: str) -> str:
@@ -68,6 +69,7 @@ def _component_type(entity_id: str) -> str:
     if domain in HELPER_DOMAINS:
         return "helper"
     return "entity"
+
 
 _ANONYMOUS = CallerContext(
     caller_id="anonymous", roles=[], is_authenticated=False, session_id=""
@@ -232,7 +234,8 @@ class MesaToolHandlers:
                 if normalised is None:
                     logger.warning(
                         "get_validity_context returned a %s for known_entity_ids on %s; "
-                        "expected an iterable of entity IDs, ignoring it",
+                        "expected a reusable collection of entity IDs (a set or list, "
+                        "not a generator or string), ignoring it",
                         type(value).__name__,
                         entity_id,
                     )
@@ -607,10 +610,10 @@ def register_mesa_tools(
     ``integration_version`` means the version of the integration that created
     THAT entity: a deployment runs many integrations at different versions, so
     one request-wide version would be compared against profiles pinned to
-    other integrations. ``known_entity_ids`` may be any iterable of entity IDs
-    except a bare string (mesa-core materialises it), and must be the
-    deployment's complete entity registry, since anything missing from it reads
-    as a removed entity. The callback must be synchronous. Without
+    other integrations. ``known_entity_ids`` must be a reusable collection of
+    entity IDs (a set or list, never a generator or a bare string) and must be
+    the deployment's complete entity registry, since anything missing from it
+    reads as a removed entity. The callback must be synchronous. Without
     the callback these triggers cannot be evaluated and an invalidated profile
     keeps reporting ``staleness_status: current`` (Spec 5.4);
     ``review_after_days`` is evaluated either way.

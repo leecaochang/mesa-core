@@ -699,7 +699,8 @@ def test_one_shot_context_values_cannot_produce_contradictory_answers() -> None:
     # known_entity_ids used to be read twice per entity, so a generator was
     # consumed by the first read and looked like an empty registry to the
     # second: get_profile said current with a false removal warning while
-    # query said stale with none.
+    # query said stale with none. A generator is now refused outright, so both
+    # tools agree that the trigger simply went unevaluated.
     store = ProfileStore(backend=MemoryBackend())
     store.set(
         "light.x",
@@ -811,15 +812,17 @@ def test_non_string_versions_are_refused() -> None:
     assert "warnings" not in out
 
 
-def test_generator_registry_is_accepted_and_materialised() -> None:
-    # The host contract accepts any iterable; mesa-core materialises it, so a
-    # registry scan returning a generator is safe.
+def test_generator_registry_is_refused() -> None:
+    # The registry must be reusable: the callback runs once per entity, so a
+    # generator would be drained by the first row of a query and leave later
+    # rows reading an empty registry. Refused rather than half-working.
     out = call(
         _with_context({"known_entity_ids": (e for e in ["light.x"])}),
         "mesa_get_profile",
         entity_id="light.x",
     )
     assert out["staleness_status"] == "current"
+    assert "warnings" not in out
 
 
 def test_async_validity_context_is_refused_not_silently_ignored(
@@ -836,3 +839,70 @@ def test_async_validity_context_is_refused_not_silently_ignored(
         out = call(registry, "mesa_get_profile", entity_id="light.x")
     assert out["entity_id"] == "light.x"
     assert any("must be synchronous" in record.message for record in caplog.records)
+
+
+def test_shared_generator_cannot_desync_rows_of_one_query() -> None:
+    # A host returning the SAME generator object for every entity used to have
+    # it drained by the first row: row one saw the registry, later rows saw an
+    # empty one and reported existing entities as removed. The registry must be
+    # reusable, so this is refused and every row agrees.
+    store = ProfileStore(backend=MemoryBackend())
+    for entity_id in ("light.a", "light.b"):
+        store.set(
+            entity_id,
+            SemanticProfile.from_dict(
+                entity_id,
+                {
+                    "semantic_profile": {
+                        "metadata_origin": {
+                            "source": "inferred_ai",
+                            "confidence": 0.9,
+                            "generated_at": "2026-07-30T00:00:00+00:00",
+                        },
+                        "profile_valid_for": {"invalidated_by_entities": [entity_id]},
+                    }
+                },
+            ),
+        )
+    shared = (e for e in ["light.a", "light.b"])
+    registry = DictToolRegistry()
+    register_mesa_tools(
+        store, adapter=registry, get_validity_context=lambda _eid: {"known_entity_ids": shared}
+    )
+    out = call(registry, "mesa_query_profiles", include_inferred=True)
+    statuses = {row["entity_id"]: row["staleness_status"] for row in out["results"]}
+    assert statuses == {"light.a": "current", "light.b": "current"}
+    assert "warnings" not in out
+
+
+def test_reusable_registry_evaluates_every_row_of_a_query() -> None:
+    # The positive case the refusal above must not break: a real collection is
+    # evaluated identically for every row, including the removals it should find.
+    store = ProfileStore(backend=MemoryBackend())
+    for entity_id in ("light.a", "light.b"):
+        store.set(
+            entity_id,
+            SemanticProfile.from_dict(
+                entity_id,
+                {
+                    "semantic_profile": {
+                        "metadata_origin": {
+                            "source": "inferred_ai",
+                            "confidence": 0.9,
+                            "generated_at": "2026-07-30T00:00:00+00:00",
+                        },
+                        "profile_valid_for": {"invalidated_by_entities": ["light.gone"]},
+                    }
+                },
+            ),
+        )
+    registry = DictToolRegistry()
+    register_mesa_tools(
+        store,
+        adapter=registry,
+        get_validity_context=lambda _eid: {"known_entity_ids": {"light.a", "light.b"}},
+    )
+    out = call(registry, "mesa_query_profiles", include_inferred=True)
+    statuses = {row["entity_id"]: row["staleness_status"] for row in out["results"]}
+    assert statuses == {"light.a": "stale", "light.b": "stale"}
+    assert len(out["warnings"]) == 2
