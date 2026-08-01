@@ -2,6 +2,36 @@
 
 All notable changes to mesa-core. The MESA specification documents carry their own version history.
 
+## 1.3.0 - 2026-08-01
+
+Implements MESA Specification 1.1.0, whose leading feature is the device inheritance scope. The profile format `schema_version` is now `1.1`. All format changes are additive: every valid 1.0 document remains valid. Deployments sharing a profile store across versions MUST upgrade readers before writing device-scoped profiles, because a 1.2.x reader rejects `inheritance_scope: device` at validation (loudly, per the new Spec 23 unknown-enum-value rule).
+
+### Added
+
+- **Device inheritance scope (Spec 5.6).** A fifth level, keyed by the HA device registry entry that owns an entity, ranked between entity and area: `get/set/delete_device_profile`, `device_keys()`, async variants, the `get_entity_device` host callback on `ProfileStore` and `InheritanceResolver`, and the `__device__:` reserved namespace. Without the callback there is no fallback and device profiles are inert. The Rule A and Rule B loosening overrides remain valid at entity scope only; a device profile tightens freely for every entity the device owns.
+- **Capability hint resolution (Spec 4).** `capability_semantics.control_mode` on an integration-scoped profile now participates in Rule A as that profile's contribution when its `operational_boundaries.control_mode` is absent, attributed below every operational_boundaries declaration. The enum is validated in both the validator and the canonical JSON Schema; the rest of `capability_semantics` stays unmodelled. Previously the field was specified as the lowest precedence rung but implemented nowhere.
+- **Query filters (Spec 9.2).** `query(devices=...)` and `query(integrations=...)`, and the matching `mesa_query_profiles` parameters. Each requires its host mapping callback and raises `ValueError` (surfaced as `invalid_query` over MCP) without it, mirroring `areas`; there is deliberately no domain fallback for the integrations filter, because a fallback filter would silently change which rows match.
+- **Profile validity evaluation (Spec 5.5).** `SemanticProfile.validity_warnings(now=..., known_entity_ids=..., integration_version=..., ha_version=...)` evaluates the stored-but-previously-unread `profile_valid_for` triggers. Each check runs only when the host supplies its input; a declared `review_after_days` with no parseable anchor warns rather than staying silent; version pins compare as exact strings.
+- **Scoped orphan detection.** `find_orphans` accepts `known_domains`/`known_integrations`/`known_areas`/`known_devices` registries and reports scoped orphans as their full reserved key; the plain one-argument call is unchanged.
+- **Schema migration 1.0 to 1.1.** `migrate_profile` walks registered steps; the 1.1 step restamps only (the format is additive). A document without a `schema_version` is treated as 1.0-era and migrated, where it was previously read as already-current and skipped.
+- **Portable archive `devices` section.** `format_version` is `1.1`; import accepts both `1.0` and `1.1`. Older mesa-core versions reject a 1.1 archive outright, which is the intended fail-closed behaviour: the alternative was silently dropping the devices section on import.
+
+### Fixed (safety)
+
+- **Malformed Enrichment Section 11 fields silently lost lease protection.** `LeaseManager` read `cooperative_priority.level`, `trigger_entities`, `condition_entities`, and `affected_entities` raw: a typo'd level (`"protectedd"`), a non-object `cooperative_priority`, or a wrong-typed entity list dropped the automation from the conflict check entirely, granting leases the profile existed to deny, or crashed the request with `AttributeError`. Unrecognized levels and malformed priority objects now read as `protected`; a malformed entity list makes the scope unevaluable and covers every requested entity; every case surfaces a warning naming the automation and field.
+- **The raw SDK adapter raised `KeyError` for unknown tool names.** Both `dispatch()` and the installed `call_tool` handler now return the Spec 9.6 `unknown_tool` error envelope, matching every other error path.
+
+### Fixed (correctness)
+
+- **Lease timestamps were timezone-naive.** Default clocks are now `datetime.now(UTC)`, so `expires_at` strings and audit/sensor timestamps carry an offset. Caller-supplied `now` values are used as-is.
+- **`TriggerValidator.validate` re-walked every automation config per declared-none entity,** re-invoking the host's `expand_target` registry callback for each pair. Configs are now walked (and targets expanded) exactly once per call.
+
+### Changed
+
+- **`mesa_version` in MCP responses is `1.1`.** `ProfileMetadata.schema_version` defaults to `1.1` for programmatically built profiles; `from_dict` keeps `1.0` for stored documents that declare none (they are 1.0-era and are never silently migrated).
+- **`component_type` is derived from the entity ID's domain** (`automation`, `scene`, `zone`, `person`, `helper`, else `entity`) instead of always `entity`. The spec enum was narrowed to the values a query can actually emit; results are always entity-keyed, so no scoped component type exists.
+- **`explain` output can name the `device` level** in `provided_by_level` and competing values.
+
 ## 1.2.1 - 2026-07-12
 
 A consolidated security and conformance release. Every finding below was reproduced against 1.2.0 before being fixed, and each carries a regression test. Operators running 1.2.0 or earlier SHOULD upgrade.

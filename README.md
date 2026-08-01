@@ -33,7 +33,7 @@ result.reason    # "Entity is prohibited by policy: lock.front_door"
 
 - Every device has a control mode: act freely, ask the user first, read-only, or never act.
 - Devices you have not configured fall back to safe defaults: lights act freely, locks and alarm panels are off-limits, everything else asks first.
-- Rules can be set for a single device, an area, or a whole device type, and are combined with a bias toward caution: the more restrictive rule wins, and anything that cannot be checked blocks rather than allows.
+- Rules can be set for a single entity, for the physical device that owns it, for an area, for an integration, or for a whole domain, and are combined with a bias toward caution: the more restrictive rule wins, and anything that cannot be checked blocks rather than allows.
 - You can add finer limits (cap the speaker volume after 10pm) and time-based rules (no blinds before sunrise).
 
 ## Asking the user to confirm
@@ -102,7 +102,7 @@ if profile is not None:
 
 ## Status
 
-mesa-core v1.2.1 is ready for use: profile storage and inheritance, enforcement with confirmation, temporal constraints including solar conditions, the MCP retrieval tools, privacy controls, the advisory lease protocol, and portable profile export/import are all implemented. Multi-agent lease preemption is planned for v2.
+mesa-core v1.3.0 is ready for use: profile storage and five-level inheritance (including the device scope of MESA 1.1), enforcement with confirmation, temporal constraints including solar conditions, the MCP retrieval tools, privacy controls, the advisory lease protocol, and portable profile export/import are all implemented. Multi-agent lease preemption is planned for v2.
 
 ```bash
 git clone https://github.com/sfox38/mesa-core
