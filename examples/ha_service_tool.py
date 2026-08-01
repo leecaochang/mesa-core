@@ -26,6 +26,11 @@ from mesa_core.privacy import CallerContext
 # Every way a Home Assistant action can name what it acts on. An entity-targeted
 # tool accepts none of them in its service data: each can reach entities this
 # call never evaluated, and only the host can resolve one.
+#
+# This guard belongs to the entity-targeted path. A few entityless services take
+# an ordinary data field named `target` (`notify.notify` names its recipients
+# with it), so a tool spanning both shapes must route on the service's schema
+# and apply this only where an entity is the target.
 RESERVED_TARGET_KEYS: frozenset[str] = frozenset(
     {"entity_id", "target", *HA_TARGET_SELECTOR_KEYS}
 )
