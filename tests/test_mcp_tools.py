@@ -502,7 +502,7 @@ def test_version_invalidated_profile_reports_stale_over_mcp() -> None:
     # as a warning (Spec 5.5).
     registry = DictToolRegistry()
     register_mesa_tools(
-        store, adapter=registry, get_validity_context=lambda: {"integration_version": "2.5.0"}
+        store, adapter=registry, get_validity_context=lambda _eid: {"integration_version": "2.5.0"}
     )
     out = call(registry, "mesa_get_profile", entity_id="light.pinned")
     assert out["staleness_status"] == "stale"
@@ -514,7 +514,7 @@ def test_query_surfaces_validity_warnings_in_the_envelope() -> None:
     store.set("light.pinned", _inferred_pinned("light.pinned"))
     registry = DictToolRegistry()
     register_mesa_tools(
-        store, adapter=registry, get_validity_context=lambda: {"integration_version": "2.5.0"}
+        store, adapter=registry, get_validity_context=lambda _eid: {"integration_version": "2.5.0"}
     )
     out = call(registry, "mesa_query_profiles", include_inferred=True)
     assert out["results"][0]["staleness_status"] == "stale"
@@ -554,7 +554,7 @@ def test_inherited_version_pin_invalidates_the_entities_that_inherit_it() -> Non
     )
     registry = DictToolRegistry()
     register_mesa_tools(
-        store, adapter=registry, get_validity_context=lambda: {"integration_version": "2.5.0"}
+        store, adapter=registry, get_validity_context=lambda _eid: {"integration_version": "2.5.0"}
     )
     out = call(registry, "mesa_get_profile", entity_id="light.a")
     assert out["staleness_status"] == "stale"
@@ -577,7 +577,7 @@ def test_validity_warnings_surface_for_trusted_profiles_too() -> None:
     )
     registry = DictToolRegistry()
     register_mesa_tools(
-        store, adapter=registry, get_validity_context=lambda: {"known_entity_ids": ["light.user"]}
+        store, adapter=registry, get_validity_context=lambda _eid: {"known_entity_ids": ["light.user"]}
     )
     out = call(registry, "mesa_get_profile", entity_id="light.user")
     assert "staleness_status" not in out
@@ -589,7 +589,7 @@ def test_raising_validity_context_degrades_instead_of_failing_the_request() -> N
     store.set("light.pinned", _inferred_pinned("light.pinned"))
     registry = DictToolRegistry()
 
-    def boom() -> dict[str, Any]:
+    def boom(_entity_id: str) -> dict[str, Any]:
         raise RuntimeError("registry unavailable")
 
     register_mesa_tools(store, adapter=registry, get_validity_context=boom)
@@ -598,7 +598,132 @@ def test_raising_validity_context_degrades_instead_of_failing_the_request() -> N
     assert out["staleness_status"] == "current"
     # A non-dict return is ignored the same way.
     registry2 = DictToolRegistry()
-    register_mesa_tools(store, adapter=registry2, get_validity_context=lambda: "nope")
+    register_mesa_tools(store, adapter=registry2, get_validity_context=lambda _eid: "nope")
     assert call(registry2, "mesa_get_profile", entity_id="light.pinned")["staleness_status"] == (
         "current"
     )
+
+
+# ------ per-entity validity context and single evaluation (audit 12 F1/F2/F5)
+
+
+def test_each_entity_is_evaluated_against_its_own_integration_version() -> None:
+    # A deployment runs many integrations at different versions. A single
+    # request-wide version compared a ZHA-pinned profile against Hue's version
+    # and reported the correct profile stale.
+    versions = {"hue": "2.4.1", "zha": "0.9.0"}
+    integrations = {"light.hue": "hue", "lock.zha": "zha"}
+    store = ProfileStore(backend=MemoryBackend(), get_entity_integration=integrations.get)
+    for entity_id, pinned in (("light.hue", "2.4.1"), ("lock.zha", "0.9.0")):
+        store.set(
+            entity_id,
+            SemanticProfile.from_dict(
+                entity_id,
+                {
+                    "semantic_profile": {
+                        "metadata_origin": {
+                            "source": "inferred_ai",
+                            "confidence": 0.9,
+                            "generated_at": "2026-07-30T00:00:00+00:00",
+                        },
+                        "profile_valid_for": {"integration_version": pinned},
+                    }
+                },
+            ),
+        )
+
+    def context(entity_id: str) -> dict[str, Any]:
+        return {"integration_version": versions[integrations[entity_id]]}
+
+    registry = DictToolRegistry()
+    register_mesa_tools(store, adapter=registry, get_validity_context=context)
+    out = call(registry, "mesa_query_profiles", include_inferred=True)
+    assert {r["entity_id"]: r["staleness_status"] for r in out["results"]} == {
+        "light.hue": "current",
+        "lock.zha": "current",
+    }
+    assert "warnings" not in out
+
+    # Upgrading only ZHA invalidates only the ZHA-pinned profile.
+    versions["zha"] = "1.0.0"
+    out = call(registry, "mesa_query_profiles", include_inferred=True)
+    assert {r["entity_id"]: r["staleness_status"] for r in out["results"]} == {
+        "light.hue": "current",
+        "lock.zha": "stale",
+    }
+    assert len(out["warnings"]) == 1 and "lock.zha" in out["warnings"][0]
+
+
+def test_scoped_only_inferred_profile_reports_staleness() -> None:
+    # Spec 9.3 requires staleness_status wherever the surfaced origin is
+    # inferred_ai, including an entity whose only profile is a scoped layer.
+    for scope, setter_name in (
+        ("domain", "set_domain_profile"),
+        ("integration", "set_integration_profile"),
+        ("area", "set_area_profile"),
+        ("device", "set_device_profile"),
+    ):
+        store = ProfileStore(
+            backend=MemoryBackend(),
+            get_entity_area=lambda _eid: "hallway",
+            get_entity_device=lambda _eid: "dev1",
+            get_entity_integration=lambda _eid: "light",
+        )
+        key = {"domain": "light", "integration": "light", "area": "hallway", "device": "dev1"}[
+            scope
+        ]
+        getattr(store, setter_name)(
+            key,
+            SemanticProfile.from_dict(
+                key,
+                {
+                    "semantic_profile": {
+                        "metadata_origin": {
+                            "source": "inferred_ai",
+                            "confidence": 0.9,
+                            "generated_at": "2020-01-01T00:00:00+00:00",
+                        }
+                    }
+                },
+            ),
+        )
+        registry, _ = make_registry(store)
+        out = call(registry, "mesa_get_profile", entity_id="light.inherited")
+        assert out["semantic_profile"]["metadata_origin"]["source"] == "inferred_ai"
+        assert out["staleness_status"] == "stale", f"{scope} scope omitted staleness_status"
+
+
+def test_one_shot_context_values_cannot_produce_contradictory_answers() -> None:
+    # known_entity_ids used to be read twice per entity, so a generator was
+    # consumed by the first read and looked like an empty registry to the
+    # second: get_profile said current with a false removal warning while
+    # query said stale with none.
+    store = ProfileStore(backend=MemoryBackend())
+    store.set(
+        "light.x",
+        SemanticProfile.from_dict(
+            "light.x",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {
+                        "source": "inferred_ai",
+                        "confidence": 0.9,
+                        "generated_at": "2026-07-30T00:00:00+00:00",
+                    },
+                    "profile_valid_for": {"invalidated_by_entities": ["light.x"]},
+                }
+            },
+        ),
+    )
+    registry = DictToolRegistry()
+    register_mesa_tools(
+        store,
+        adapter=registry,
+        get_validity_context=lambda _eid: {"known_entity_ids": (e for e in ["light.x"])},
+    )
+    got = call(registry, "mesa_get_profile", entity_id="light.x")
+    queried = call(registry, "mesa_query_profiles", include_inferred=True)
+    assert got["staleness_status"] == "current"
+    assert "warnings" not in got
+    assert queried["results"][0]["staleness_status"] == "current"
+    assert "warnings" not in queried

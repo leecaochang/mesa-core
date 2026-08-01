@@ -275,7 +275,7 @@ MESA is additive. Systems that do not expose `semantic_profile` remain fully con
 | `profile_version` | `string` | SHOULD | Version of this specific profile. Implementor-defined. |
 | `metadata_origin` | `object` | RECOMMENDED | Profile provenance. See Section 5.3. When absent, the default depends on the profile's location: profiles loaded from an integration's `mesa_profile.json` default to `source: developer`; profiles from any other location default to `source: unknown`. See Section 5.3. |
 | `semantic_tags` | `array<string>` | RECOMMENDED | Namespaced tags classifying this component. See Appendix A. |
-| `last_updated` | `string` | SHOULD | ISO 8601 timestamp of most recent modification. |
+| `last_updated` | `string` | SHOULD | ISO 8601 timestamp of most recent modification. Required in practice when `profile_valid_for.review_after_days` is declared, which counts from it (Section 5.5). |
 | `inheritance_scope` | `enum` | RECOMMENDED | How this profile applies in the inheritance hierarchy. `entity` (applies to this entity only, default), `domain` (applies to all entities of one HA entity domain, e.g. all `lock.*`), `integration` (applies to all entities created by one integration; the `mesa_profile.json` sidecar default), `area` (applies to all entities assigned to this area), `device` (applies to all entities belonging to one HA device registry entry). See Section 5.6. |
 | `profile_valid_for` | `object` | MAY | Conditions under which this profile should be reviewed. See Section 5.5. |
 
@@ -344,13 +344,15 @@ A stale profile MUST NOT be silently discarded. It MUST be surfaced with a `stal
 
 ### 5.5 Profile Freshness and Invalidation
 
-Human-authored profiles do not decay but can become stale when the deployment changes around them. The `profile_valid_for` object declares invalidation triggers.
+Human-authored profiles do not decay with age, but the deployment can change around them until they no longer describe it. The `profile_valid_for` object declares invalidation triggers for that case.
+
+**Invalidated is not stale.** `staleness_status` (Section 5.4) is an age-and-invalidation signal carried by `inferred_ai` profiles, and a trusted profile never reports `stale`: it did not decay, and its author did not stop being authoritative. When a trigger fires on a trusted profile the host surfaces an invalidation warning instead, marking it as needing operator review. Both readings share the same triggers below; only the reported field differs.
 
 | Field | Type | Description |
 |---|---|---|
-| `integration_version` | `string` | Integration version this profile was authored against. |
+| `integration_version` | `string` | Integration version this profile was authored against. Home Assistant requires `manifest.version` only for custom integrations, so this trigger is evaluable for those; profiles describing core-integration entities SHOULD pin `ha_version` instead. |
 | `ha_version` | `string` | HA version at time of authoring. |
-| `review_after_days` | `number` | Flag for review after this many days regardless of other conditions. |
+| `review_after_days` | `number` | Flag for review after this many days regardless of other conditions. Counted from `last_updated`, falling back to `metadata_origin.generated_at`. A profile declaring this trigger MUST carry one of them; with neither there is nothing to count from and the trigger can never fire, so hosts report it as unevaluable rather than as satisfied. |
 | `invalidated_by_entities` | `array<string>` | Entity IDs whose removal or renaming triggers invalidation. |
 
 ```json
@@ -998,7 +1000,7 @@ All filter fields are optional and combinable. An empty query returns all availa
 ```json
 {
   "domains": ["light"],
-  "areas": ["area.living_room"],
+  "areas": ["living_room"],
   "tags": ["lighting.ambient"],
   "include_inferred": false,
   "include_fields": ["semantic_tags", "operational_boundaries"],
@@ -1316,6 +1318,8 @@ Conformance levels are declared by host implementations (Section 2). Table B.1 l
 ---
 
 ## Version History
+
+**How the documents are versioned.** This document's version is the MESA version, and the companion Enrichment document shares it because section numbering is continuous and both are normative. The Overview, Getting Started Guide, and mesa-core Module Proposal carry their own document versions, because they are revised on their own schedule, and each states which MESA version it describes in its header. mesa-core's package version is independent of all of these; the profile format version is `schema_version` (Section 5.2), which changes only when the format does.
 
 ### 1.1.0
 

@@ -1,5 +1,6 @@
 # mesa-core: MESA Reference Module Proposal
-**Version:** 1.0
+**Version:** 1.1
+**Describes:** MESA 1.1, mesa-core 1.3.x
 **Document Type:** Technical Implementation Specification
 **Companion Documents:**
 - MESA Overview
@@ -108,7 +109,7 @@ mesa-core/
     mesa_core/
         __init__.py              # Public API exports
         schemas/
-            mesa_profile.schema.json   # Canonical JSON Schema for MESA profiles (v1.0)
+            mesa_profile.schema.json   # Canonical JSON Schema for MESA profiles (v1.1)
             mesa_tools.schema.json     # JSON Schema for MCP tool inputs and outputs
         profile.py               # SemanticProfile, DiagnosticProfile dataclasses
         store.py                 # ProfileStore interface
@@ -572,7 +573,7 @@ explanation = resolver.explain("light.bedroom_ceiling")
 # Host provides these lookups at initialisation
 resolver = InheritanceResolver(
     store=store,
-    get_entity_area=lambda entity_id: "area.bedroom",   # return area ID for entity
+    get_entity_area=lambda entity_id: "bedroom",        # HA area registry ID
     get_entity_domain=lambda entity_id: "light"          # return integration domain
 )
 ```
@@ -786,7 +787,7 @@ lease_manager.sensor_state()                    # binary_sensor.mesa_lease_activ
 **Design properties:**
 
 - **In-memory only.** Leases (max 30 seconds, session-scoped) are never persisted; a restart terminates all sessions and therefore all leases. Persistence would resurrect stale locks.
-- **Lazy expiry.** Every operation ignores and sweeps expired leases, so correctness never depends on a background task. Hosts SHOULD call `expire()` (or `aexpire()`) periodically so `mesa_lease_expired` events fire close to `expires_at`, and SHOULD call `release_session()` on session termination (Enrichment 21.4).
+- **Lazy expiry.** An expired lease never grants anything, so correctness never depends on a background task, but removal and the `mesa_lease_expired` event happen only when a lifecycle operation sweeps: `request()`, `release()`, `release_session()`, `expire()`, and `sensor_state()` sweep, while `active_leases()` filters expired entries out of its result without removing them or emitting, so it stays a side-effect-free read. Hosts SHOULD therefore call `expire()` (or `aexpire()`) periodically so events fire close to `expires_at` rather than relying on reads to produce them, and SHOULD call `release_session()` on session termination (Enrichment 21.4).
 - **Existing holder wins.** Overlapping requests from another session are denied per entity (partial grants are valid). Multi-agent priority preemption (Enrichment 21.6) ships in v2; `caller_priority` is accepted but unused.
 - **Fail-closed automation checks.** Entities monitored by `protected` automations are denied while the automation is active; without a `get_state` callback the automation is treated as active. `critical` automation scope (trigger, condition, and affected entities) is denied unconditionally. `cooperative` and `assertive` automations surface in `active_conflicts`.
 - **Events via callback.** `on_lease_event` receives the Enrichment 21.4 payload (`lease_id`, `entities`, `reason`, `timestamp`) for every ended lease; the host bridges it onto the HA event bus as `mesa_lease_expired`.
@@ -964,8 +965,18 @@ store = ProfileStore(backend=SqliteBackend("/config/mesa/mesa.db"))
 # domain inheritance levels rather than raising. Cache the registry, or bridge with
 # asyncio.run_coroutine_threadsafe against your server's loop.
 def get_entity_area(entity_id: str) -> Optional[str]:
-    # Look the entity up in your cached copy of the HA area registry
-    ...
+    # EFFECTIVE area, not just the entity's own: an entity with no area_id of
+    # its own inherits the area of the device that owns it, so check the
+    # entity registry entry first and fall back to the device registry entry.
+    # Returning only the entity's own area_id silently skips area inheritance
+    # for the many entities that are placed by their device.
+    entry = entity_registry.get(entity_id)
+    if entry is None:
+        return None
+    if entry.area_id is not None:
+        return entry.area_id
+    device = device_registry.get(entry.device_id) if entry.device_id else None
+    return device.area_id if device else None
 
 def get_entity_domain(entity_id: str) -> str:
     return entity_id.split(".")[0]
@@ -1000,21 +1011,30 @@ enforcer = MesaEnforcer(store=store, resolver=resolver)
 # grants leases it should deny.
 lease_manager = LeaseManager(store)
 
+# Authentication is YOUR job, not mesa-core's: Specification 9.1 requires
+# Level 3 servers to reject unauthenticated requests with HA-equivalent
+# authentication, and mesa-core never sees your transport. Reject at the
+# transport, BEFORE a tool handler runs. Raising from the caller-context
+# callback does not work: the handlers catch exceptions and answer
+# server_error, not the unauthorized envelope of Specification 9.6.
+@app.middleware
+async def require_authentication(request, call_next):
+    session = session_for(request)
+    if session is None or not session.is_authenticated:
+        return {"error": "unauthorized",
+                "message": "authentication required",
+                "details": {}}
+    return await call_next(request)
+
 # Caller context function (host server provides this). mesa-core applies
 # access_roles before surfacing any profile, so without this the base privacy
-# level applies to every caller equally (Spec 7.2).
-#
-# Authenticating the request is YOUR job, not mesa-core's: Specification 9.1
-# requires Level 3 servers to reject unauthenticated requests with
-# HA-equivalent authentication, and mesa-core never sees your transport. Gate
-# the connection first and derive the context from the authenticated session;
-# a server that always returns an anonymous context is conformant only for
-# base privacy levels and gives access_roles nothing to isolate (Spec 3,
-# caller identity realism).
+# level applies to every caller equally (Spec 7.2). By the time it runs the
+# request is already authenticated, so it only reads the session; a server
+# that always returns an anonymous context is conformant for base privacy
+# levels but gives access_roles nothing to isolate (Spec 3, caller identity
+# realism).
 def get_caller_context() -> CallerContext:
     session = current_session()          # your transport's authenticated session
-    if session is None or not session.is_authenticated:
-        raise PermissionError("unauthenticated MCP request")
     return CallerContext(
         caller_id=session.user_id,
         roles=session.roles,
@@ -1023,15 +1043,32 @@ def get_caller_context() -> CallerContext:
     )
 
 # Deployment facts the Spec 5.5 invalidation triggers are evaluated against.
-# Without this, integration_version / ha_version / invalidated_by_entities
-# cannot be evaluated and an invalidated profile keeps reporting
-# staleness_status: current (Spec 5.4). review_after_days needs nothing.
-def get_validity_context() -> dict:
-    return {
-        "known_entity_ids": hass_entity_ids(),      # your cached entity registry
-        "integration_version": installed_version(),
+# Called once per entity, because integration_version means the version of the
+# integration that created THAT entity: a deployment runs many integrations at
+# different versions, so returning one version for the whole request would
+# compare profiles against a version they were never authored against.
+# Without this callback these triggers cannot be evaluated and an invalidated
+# profile keeps reporting staleness_status: current (Spec 5.4).
+# review_after_days needs nothing from the host.
+def get_validity_context(entity_id: str) -> dict:
+    context = {
+        # Must be COMPLETE and reusable: anything missing reads as a removed
+        # entity and produces a false invalidation. Enumerate the entity
+        # registry itself, not the display/UI endpoint, which omits disabled
+        # entities. A set or list, never a generator.
+        "known_entity_ids": hass_entity_ids(),
         "ha_version": hass_version(),
     }
+    # Core integrations do not carry manifest.version (Home Assistant requires
+    # it only for custom integrations), so integration_version is available for
+    # custom integrations alone. Omit it rather than inventing one: an omitted
+    # key leaves that trigger unevaluated, while a wrong value invalidates
+    # correct profiles. Profiles for core-integration entities should pin
+    # ha_version instead.
+    version = manifest_version(integration_of(entity_id))
+    if version is not None:
+        context["integration_version"] = version
+    return context
 
 # Register all MESA tools
 register_mesa_tools(
@@ -1072,7 +1109,7 @@ mesa-core provides adapters for the two most common MCP Python frameworks.
 **Custom adapter.** Host servers using other frameworks implement the `ToolRegistry` protocol:
 
 ```python
-from mesa_core.mcp.adapters import ToolRegistry
+from mesa_core.mcp.adapters import ToolHandler, ToolRegistry
 
 class MyFrameworkRegistry:
     def register_tool(
@@ -1083,6 +1120,11 @@ class MyFrameworkRegistry:
 
 register_mesa_tools(store=store, adapter=MyFrameworkRegistry(), server=app)
 ```
+
+Import both names. Python evaluates annotations eagerly before 3.14, so
+annotating `handler` with a `ToolHandler` you did not import raises
+`NameError` at class definition time on the 3.11 through 3.13 interpreters
+this package supports.
 
 All four parameters are required: `register_mesa_tools` passes the tool's
 description positionally alongside its schema, so a `register_tool` accepting

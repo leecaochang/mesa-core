@@ -14,7 +14,7 @@ a parse/serialise round-trip neither invents declarations nor loses them.
 from __future__ import annotations
 
 import copy
-from collections.abc import Iterable, Iterator
+from collections.abc import Collection, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -173,6 +173,20 @@ class PersonTraits:
     associated_zones: list[str] = field(default_factory=list)
     associated_automations: list[str] = field(default_factory=list)
     presence_entity: str | None = None
+
+
+@dataclass
+class FreshnessReport:
+    """One evaluation of a profile's freshness (Spec 5.4, 5.5).
+
+    ``status`` is the Spec 5.4 ``staleness_status`` value; ``warnings`` are the
+    Spec 5.5 invalidation findings, including triggers that could not be
+    evaluated. Both come from a single pass over ``profile_valid_for``, so they
+    can never disagree about whether a trigger fired.
+    """
+
+    status: str
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -392,11 +406,38 @@ class SemanticProfile:
             return self.metadata.confidence
         return 1.0 if self.is_trusted() else 0.0
 
+    def freshness(
+        self,
+        now: datetime | None = None,
+        *,
+        known_entity_ids: Collection[str] | None = None,
+        integration_version: str | None = None,
+        ha_version: str | None = None,
+    ) -> FreshnessReport:
+        """Staleness status and invalidation warnings from ONE evaluation.
+
+        ``staleness_status`` and ``validity_warnings`` read the same
+        ``profile_valid_for`` triggers, so evaluating them separately can
+        report a status and a warning set that disagree. Callers that want
+        both (the retrieval tools do) call this instead, and the two answers
+        are guaranteed consistent because they come from a single pass.
+        """
+        findings = self._validity_findings(
+            now=now,
+            known_entity_ids=known_entity_ids,
+            integration_version=integration_version,
+            ha_version=ha_version,
+        )
+        return FreshnessReport(
+            status=self._staleness_from(findings, now),
+            warnings=[message for _, message in findings],
+        )
+
     def staleness_status(
         self,
         now: datetime | None = None,
         *,
-        known_entity_ids: Iterable[str] | None = None,
+        known_entity_ids: Collection[str] | None = None,
         integration_version: str | None = None,
         ha_version: str | None = None,
     ) -> str:
@@ -410,19 +451,26 @@ class SemanticProfile:
         :meth:`validity_warnings`. A fired trigger is definite evidence of
         staleness, so it outranks ``unknown``; a trigger that cannot be
         evaluated leaves the status alone and is surfaced as a warning instead.
+
+        Use :meth:`freshness` when the warnings are wanted as well, so both
+        answers come from one evaluation of the triggers.
         """
-        if not self.is_inferred():
-            return "current"
-        fired = any(
-            fired
-            for fired, _ in self._validity_findings(
+        return self._staleness_from(
+            self._validity_findings(
                 now=now,
                 known_entity_ids=known_entity_ids,
                 integration_version=integration_version,
                 ha_version=ha_version,
-            )
+            ),
+            now,
         )
-        if fired:
+
+    def _staleness_from(
+        self, findings: list[tuple[bool, str]], now: datetime | None
+    ) -> str:
+        if not self.is_inferred():
+            return "current"
+        if any(fired for fired, _ in findings):
             return "stale"
         if not self.metadata.generated_at:
             return "unknown"
@@ -447,7 +495,7 @@ class SemanticProfile:
         self,
         *,
         now: datetime | None = None,
-        known_entity_ids: Iterable[str] | None = None,
+        known_entity_ids: Collection[str] | None = None,
         integration_version: str | None = None,
         ha_version: str | None = None,
     ) -> list[str]:
@@ -478,7 +526,7 @@ class SemanticProfile:
         self,
         *,
         now: datetime | None = None,
-        known_entity_ids: Iterable[str] | None = None,
+        known_entity_ids: Collection[str] | None = None,
         integration_version: str | None = None,
         ha_version: str | None = None,
     ) -> list[tuple[bool, str]]:

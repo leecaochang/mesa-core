@@ -13,7 +13,7 @@ Errors are returned as the Spec 9.6 envelope:
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from typing import Any
 
 from mesa_core.exceptions import (
@@ -27,7 +27,7 @@ from mesa_core.lease import LeaseManager
 from mesa_core.mcp.adapters import ToolRegistry
 from mesa_core.mcp.schemas import TOOL_DESCRIPTIONS, TOOL_SCHEMAS
 from mesa_core.privacy import AccessDecision, CallerContext, PrivacyEnforcer
-from mesa_core.profile import HELPER_DOMAINS, SemanticProfile
+from mesa_core.profile import HELPER_DOMAINS, FreshnessReport, SemanticProfile
 from mesa_core.store import ProfileStore
 
 logger = logging.getLogger("mesa_core.mcp")
@@ -137,7 +137,7 @@ class MesaToolHandlers:
         lease_manager: LeaseManager | None = None,
         get_semantic_moments: Callable[[str], list[dict[str, Any]] | None] | None = None,
         privacy_enforcer: PrivacyEnforcer | None = None,
-        get_validity_context: Callable[[], dict[str, Any]] | None = None,
+        get_validity_context: Callable[[str], dict[str, Any]] | None = None,
     ) -> None:
         self.store = store
         self.resolver = resolver or InheritanceResolver(store=store)
@@ -174,26 +174,39 @@ class MesaToolHandlers:
 
     _VALIDITY_KEYS = ("known_entity_ids", "integration_version", "ha_version")
 
-    def _validity_context(self) -> dict[str, Any]:
-        """Host deployment context for the Spec 5.5 invalidation triggers.
+    def _freshness(self, entity_id: str, effective: SemanticProfile) -> FreshnessReport:
+        """Evaluate one entity's freshness against its own deployment context.
 
-        ``review_after_days`` needs nothing from the host, but the registry and
-        version pins can only be evaluated against data mesa-core never sees, so
-        without this callback those triggers stay unevaluated and an
-        invalidated profile keeps reporting ``current`` (Spec 5.4). Unknown
-        keys are ignored and a raising callback degrades to no context rather
-        than failing the request.
+        The context is fetched per entity, not per request: ``integration_version``
+        is the version of the integration that created THIS entity, and a
+        deployment runs many integrations at different versions, so a single
+        request-wide version would be compared against profiles pinned to other
+        integrations and report them stale on the strength of an unrelated
+        version. ``review_after_days`` needs nothing from the host, but the
+        registry and version pins can only be evaluated against data mesa-core
+        never sees, so without the callback those triggers stay unevaluated and
+        an invalidated profile keeps reporting ``current`` (Spec 5.4).
+
+        Status and warnings come from one evaluation (Spec 5.4 and 5.5 read the
+        same triggers), so they cannot disagree. Unknown keys are ignored, and
+        a raising or wrong-typed callback degrades to no context rather than
+        failing the request.
         """
-        if self.get_validity_context is None:
-            return {}
-        try:
-            context = self.get_validity_context()
-        except Exception:
-            logger.exception("get_validity_context failed")
-            return {}
-        if not isinstance(context, dict):
-            return {}
-        return {key: context[key] for key in self._VALIDITY_KEYS if key in context}
+        context: dict[str, Any] = {}
+        if self.get_validity_context is not None:
+            try:
+                supplied = self.get_validity_context(entity_id)
+            except Exception:
+                logger.exception("get_validity_context failed for %s", entity_id)
+                supplied = None
+            if isinstance(supplied, dict):
+                context = {key: supplied[key] for key in self._VALIDITY_KEYS if key in supplied}
+        known = context.get("known_entity_ids")
+        if known is not None and not isinstance(known, Collection):
+            # A one-shot iterable would be consumed by the first check and read
+            # as an empty registry by the next, inventing removal warnings.
+            context["known_entity_ids"] = frozenset(known)
+        return effective.freshness(**context)
 
     def _caller_context(self) -> CallerContext | None:
         if self.caller_context_fn is None:
@@ -239,10 +252,9 @@ class MesaToolHandlers:
     def _result_object(
         self,
         entity_id: str,
-        stored: SemanticProfile,
         effective: SemanticProfile,
         include_fields: list[str] | None,
-        validity_context: dict[str, Any] | None = None,
+        freshness: FreshnessReport,
     ) -> dict[str, Any]:
         doc = effective.to_dict()
         sp = doc.get("semantic_profile", {})
@@ -257,11 +269,12 @@ class MesaToolHandlers:
             "semantic_profile": sp,
             "privacy_classification": doc.get("privacy_classification"),
         }
-        if stored.is_inferred():
-            # Evaluated on the effective profile: its profile_valid_for is the
-            # merge across layers, so a version pin declared by an integration
-            # sidecar invalidates the entities that inherit it (Spec 5.4, 5.5).
-            out["staleness_status"] = effective.staleness_status(**(validity_context or {}))
+        # Gated on the EFFECTIVE origin, not the stored one: Spec 9.3 requires
+        # staleness_status whenever the surfaced metadata_origin is inferred_ai,
+        # which includes an entity whose only profile is an inferred domain,
+        # integration, area, or device layer.
+        if effective.is_inferred():
+            out["staleness_status"] = freshness.status
         if (
             include_fields
             and "diagnostic_profile" in include_fields
@@ -297,7 +310,6 @@ class MesaToolHandlers:
                 resolver=self.resolver,
             )
             include_fields = params.get("include_fields")
-            validity_context = self._validity_context()
             validity_warnings: list[str] = []
             results: list[dict[str, Any]] = []
             for row in result.rows:
@@ -308,13 +320,13 @@ class MesaToolHandlers:
                     if denied is not None:
                         results.append(denied)
                     continue
+                # One evaluation per entity, against that entity's own context.
                 # Spec 5.5: a host SHOULD surface a warning when an
                 # invalidation trigger fires, for profiles of any origin.
-                validity_warnings.extend(effective.validity_warnings(**validity_context))
+                freshness = self._freshness(row.entity_id, effective)
+                validity_warnings.extend(freshness.warnings)
                 results.append(
-                    self._result_object(
-                        row.entity_id, row.stored, effective, include_fields, validity_context
-                    )
+                    self._result_object(row.entity_id, effective, include_fields, freshness)
                 )
             response: dict[str, Any] = {
                 "mesa_version": MESA_VERSION,
@@ -352,7 +364,6 @@ class MesaToolHandlers:
                 return _error(
                     "not_found", f"entity {entity_id!r} has no MESA profile at any level"
                 )
-            stored = self.store.get(entity_id)
             effective = self.resolver.resolve(entity_id)
             decision = self._access(entity_id, effective)
             if not decision.allowed:
@@ -373,14 +384,14 @@ class MesaToolHandlers:
             }
             if include_diagnostic and effective.diagnostic_profile is not None:
                 out["diagnostic_profile"] = effective.diagnostic_profile
-            validity_context = self._validity_context()
-            if stored is not None and stored.is_inferred():
-                out["staleness_status"] = effective.staleness_status(**validity_context)
-            # Spec 5.5: surface a warning when an invalidation trigger fires.
-            # Applies to every origin, not only inferred profiles.
-            validity_warnings = effective.validity_warnings(**validity_context)
-            if validity_warnings:
-                out["warnings"] = validity_warnings
+            freshness = self._freshness(entity_id, effective)
+            # Spec 9.3: staleness_status accompanies an inferred_ai origin,
+            # including one inherited from a scoped layer the entity does not
+            # store itself. Spec 5.5's warnings apply to every origin.
+            if effective.is_inferred():
+                out["staleness_status"] = freshness.status
+            if freshness.warnings:
+                out["warnings"] = freshness.warnings
             if params.get("include_semantic_moments", False):
                 moments = self._semantic_moments(entity_id)
                 if moments is not None:
@@ -511,7 +522,7 @@ def register_mesa_tools(
     lease_manager: LeaseManager | None = None,
     caller_context_fn: Callable[[], CallerContext] | None = None,
     get_semantic_moments: Callable[[str], list[dict[str, Any]] | None] | None = None,
-    get_validity_context: Callable[[], dict[str, Any]] | None = None,
+    get_validity_context: Callable[[str], dict[str, Any]] | None = None,
 ) -> ToolRegistry:
     """Register all MESA MCP tools into the host server's tool registry.
 
@@ -520,10 +531,17 @@ def register_mesa_tools(
 
     ``get_validity_context`` supplies the deployment facts the Spec 5.5
     invalidation triggers are evaluated against, as a dict with any of
-    ``known_entity_ids``, ``integration_version``, and ``ha_version``. Without
-    it those triggers cannot be evaluated and a version-invalidated or
-    entity-invalidated profile keeps reporting ``staleness_status: current``
-    (Spec 5.4); ``review_after_days`` is evaluated either way.
+    ``known_entity_ids``, ``integration_version``, and ``ha_version``. It is
+    called once per entity and receives that entity's ID, because
+    ``integration_version`` means the version of the integration that created
+    THAT entity: a deployment runs many integrations at different versions, so
+    one request-wide version would be compared against profiles pinned to
+    other integrations. ``known_entity_ids`` must be a reusable collection (a
+    set or list, not a generator) and must be the deployment's complete entity
+    registry, since anything missing from it reads as a removed entity. Without
+    the callback these triggers cannot be evaluated and an invalidated profile
+    keeps reporting ``staleness_status: current`` (Spec 5.4);
+    ``review_after_days`` is evaluated either way.
 
     When ``lease_manager`` is provided, the lease coordination tools
     (mesa_request_lease, mesa_release_lease) are registered as well; omitted,

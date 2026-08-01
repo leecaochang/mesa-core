@@ -1,5 +1,6 @@
 # MESA Enrichment Specification
 **Version:** 1.0
+**Describes:** MESA 1.1 (Sections 10-21 unchanged since MESA 1.0)
 **Document Type:** Formal Schema Reference (companion to the MESA Specification)
 
 ---
@@ -74,7 +75,7 @@ Describes how effects in this area propagate to other areas through physical cha
 {
   "spatial_leakage": [
     {
-      "target_area": "area.study",
+      "target_area": "study",
       "leakage_type": "acoustic",
       "severity": "significant",
       "conditions": "Open plan. Sound carries clearly at all volume levels."

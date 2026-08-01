@@ -1,6 +1,7 @@
 # MESA: Metadata and Environment Semantics for Agents
 **A semantic safety and coordination layer for AI-operated smart environments**
-**Version:** 1.0
+**Version:** 1.1
+**Describes:** MESA 1.1
 
 ---
 

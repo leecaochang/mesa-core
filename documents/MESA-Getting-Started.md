@@ -1,5 +1,6 @@
 # MESA Getting Started Guide
 **Version:** 1.1
+**Describes:** MESA 1.1
 **Document Type:** Practical Implementation Guide
 
 ---
@@ -189,7 +190,10 @@ register_mesa_tools(server=your_mcp_server, store=store)
 **Step 3: Wrap service calls with MESA enforcement.**
 
 ```python
+from datetime import datetime
+
 from mesa_core import MesaEnforcer
+from mesa_core.exceptions import MesaEnforcementError
 
 enforcer = MesaEnforcer(store)
 
@@ -201,13 +205,25 @@ result = enforcer.evaluate(
     current_time=datetime.now()
 )
 if not result.allowed:
+    if result.confirmation_challenge is not None:
+        # control_mode: confirm. This is not a refusal: return the challenge
+        # to the agent, let it show the user what is about to happen, and
+        # resubmit the same call with the token from the approved challenge.
+        # Raising here instead makes confirmation impossible, which turns
+        # every confirm entity into a prohibited one.
+        return {"requires_confirmation": result.confirmation_challenge}
     raise MesaEnforcementError(result.reason)
 # proceed with service call
 ```
 
+On the resubmitted call, pass the approved token through `confirmation_token`;
+the enforcer verifies the round-trip and that the parameters still match the
+ones the user approved (Specification 6.6). See the Module Proposal for the
+full challenge and token shapes.
+
 **Step 4: Declare your conformance level.**
 
-Level 1 (profile consumer only) requires Step 2 only. Level 2 adds profile authoring. Level 3 adds the full retrieval API, enforcement, and lease protocol. Start at Level 1 and add capabilities incrementally.
+Level 1 (profile consumer) is about reading profiles and respecting what they say: parse them, surface `metadata_origin` to your decision logic, weight inferred profiles lower, treat a missing `control_mode` as `confirm`, and never expose an entity to a caller its `deny_for` names. None of that requires the MCP tools, so Level 1 needs Step 1 and the storage setup, not Step 2. Level 2 adds authoring and storing profiles, including stamping `metadata_origin` on everything you generate. Level 3 is what Steps 2 and 3 build: the retrieval tools, enforcement, and optionally the lease protocol. Start at Level 1 and add capabilities incrementally. The full requirement list per level is in Specification Section 2.
 
 **Step 5: Tell your users.**
 
