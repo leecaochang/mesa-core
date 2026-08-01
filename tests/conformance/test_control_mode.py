@@ -471,12 +471,34 @@ def test_service_params_naming_another_entity_is_denied() -> None:
     assert result.confirmation_challenge is None
 
 
+def test_non_string_targets_are_denied_too() -> None:
+    # Rejecting only mismatched strings left the realistic shapes open: Home
+    # Assistant accepts a list of entity IDs in service data, and a list
+    # naming a second entity would be evaluated for the first alone and still
+    # hand back an approvable challenge covering both.
+    enforcer = MesaEnforcer(store=_confirm_store(), mode="enforced")
+    for params_entity in (
+        ["light.x", "lock.front_door"],
+        ["light.x"],
+        None,
+        {"entity_id": "lock.front_door"},
+        123,
+    ):
+        result = enforcer.evaluate(
+            entity_id="light.x",
+            service="light.turn_on",
+            service_params={"entity_id": params_entity, "brightness": 255},
+        )
+        assert not result.allowed, params_entity
+        assert result.rule_applied == "contradictory_target", params_entity
+        assert result.confirmation_challenge is None, params_entity
+
+
 def test_matching_or_absent_entity_id_in_service_params_is_unaffected() -> None:
     enforcer = MesaEnforcer(store=_confirm_store(), mode="enforced")
     for params in (
         {"entity_id": "light.x", "brightness": 255},
         {"brightness": 255},
-        {"entity_id": None},
     ):
         result = enforcer.evaluate(
             entity_id="light.x", service="light.turn_on", service_params=params

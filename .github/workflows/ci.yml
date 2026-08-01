@@ -25,3 +25,21 @@ jobs:
         run: mypy
       - name: Test
         run: pytest tests/ -v
+
+  # The adapter supports both FastMCP lineages, and the resolver installs the
+  # newest by default, so nothing above would notice the older one breaking.
+  # RuntimeWarnings are errors here: that is how the 2.x async get_tool
+  # mismatch showed itself.
+  fastmcp-oldest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install with the oldest supported FastMCP
+        run: |
+          pip install -e ".[dev,mcp]"
+          pip install "fastmcp==2.12.0"
+      - name: Adapter tests
+        run: pytest tests/integration/ -v -W error::RuntimeWarning

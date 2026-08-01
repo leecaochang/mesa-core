@@ -290,8 +290,8 @@ class SemanticProfile:
     # be called with the same value (and freshness() evaluates once for both),
     # so a one-shot iterable would be exhausted by the first call and read as
     # an empty registry afterwards, inventing removal warnings. The host
-    # callback is looser: it may return any iterable, which mesa-core
-    # materialises before use.
+    # callback carries the same requirement: it runs once per entity, so a
+    # generator handed back each time is drained by the first row of a query.
     def freshness(self, now: Optional[datetime] = None, *,
                   known_entity_ids: Optional[Collection[str]] = None,
                   integration_version: Optional[str] = None,
@@ -1216,7 +1216,7 @@ mesa-core never talks to Home Assistant. Every piece of HA registry or state kno
 | `expand_target` | `TriggerValidator`, `entities_by_role` | Indirect references (device triggers, purpose-specific trigger target selectors) are invisible; a stale `none` declaration behind them passes unflagged. |
 | `caller_context_fn` | `register_mesa_tools` | Tools respond as an anonymous, role-less caller; lease session scoping degrades. |
 | `get_semantic_moments` | `register_mesa_tools` / `MesaToolHandlers` | `mesa_get_profile` never includes the `semantic_moments` block; agents fall back to profile-declared automation semantics. |
-| `get_validity_context` | `register_mesa_tools` / `MesaToolHandlers` | The `profile_valid_for` registry and version triggers cannot be evaluated, so an invalidated profile keeps reporting `staleness_status: current` and no invalidation warning is surfaced (Specification 5.4, 5.5). `review_after_days` is evaluated either way. Called once per entity, with that entity's ID. Must be synchronous, like the resolver callbacks: an `async def` returns a coroutine rather than a context, which mesa-core refuses with a logged warning rather than reading as an empty context. Values are type-checked, and a wrong-typed one is dropped with a warning; `known_entity_ids` may be any iterable of entity IDs (a generator is materialised for you) but never a bare string. |
+| `get_validity_context` | `register_mesa_tools` / `MesaToolHandlers` | The `profile_valid_for` registry and version triggers cannot be evaluated, so an invalidated profile keeps reporting `staleness_status: current` and no invalidation warning is surfaced (Specification 5.4, 5.5). `review_after_days` is evaluated either way. Called once per entity, with that entity's ID. Must be synchronous, like the resolver callbacks: an `async def` returns a coroutine rather than a context, which mesa-core refuses with a logged warning rather than reading as an empty context. Values are type-checked, and a wrong-typed one is dropped with a warning; `known_entity_ids` must be a reusable collection of entity IDs, a set or list: a generator or a bare string is refused, because the callback runs once per entity and a one-shot value would be drained by the first row of a query. |
 | `on_lease_event` | `LeaseManager` | `mesa_lease_expired` events are not bridged to the HA event bus. |
 
 ---

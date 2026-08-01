@@ -28,8 +28,13 @@ async def call_ha_service(
     service_data: dict[str, Any] | None = None,
     confirmation_token: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """The documented handler's signature (body irrelevant to registration)."""
-    return {"service_params": {"entity_id": entity_id, **(service_data or {})}}
+    """The documented handler's signature and its service_params merge.
+
+    The validated target is merged LAST, as the documentation now shows:
+    expanding service_data over it would let a caller-supplied entity_id
+    replace the entity policy was chosen for.
+    """
+    return {"service_params": {**(service_data or {}), "entity_id": entity_id}}
 
 
 EXPECTED_PROPERTIES = {
@@ -81,6 +86,21 @@ def test_service_parameters_reach_the_enforcer_call() -> None:
         call_ha_service("light", "turn_on", "light.x", {"brightness": 255})
     )
     assert result["service_params"] == {"entity_id": "light.x", "brightness": 255}
+
+
+def test_caller_supplied_target_cannot_replace_the_explicit_entity() -> None:
+    # The merge order is the host-side half of the contradictory-target
+    # defence: the enforcer denies a mismatch, but the documented handler must
+    # not construct one from a caller's service data in the first place.
+    result = asyncio.run(
+        call_ha_service(
+            "light",
+            "turn_on",
+            "light.x",
+            {"entity_id": "lock.front_door", "brightness": 255},
+        )
+    )
+    assert result["service_params"]["entity_id"] == "light.x"
 
 
 async def variadic_handler(domain: str, **kwargs: Any) -> dict[str, Any]:

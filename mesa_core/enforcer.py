@@ -361,11 +361,18 @@ class MesaEnforcer:
         # inside the service data, which is exactly how a caller-supplied
         # parameter reaches the wire. Denied rather than reconciled: there is
         # no safe way to guess which target the operator meant.
-        params_entity = service_params.get("entity_id")
-        if isinstance(params_entity, str) and params_entity != entity_id:
+        # Presence, not string-mismatch: a list, a null, or any other shape is
+        # equally contradictory. Home Assistant accepts a list of entity IDs in
+        # service data, and ["light.x", "lock.front_door"] would otherwise be
+        # evaluated for light.x alone and hand back an approvable challenge
+        # covering the lock too. Policy is per entity, so a multi-entity call is
+        # evaluated by calling this once per entity.
+        if "entity_id" in service_params and service_params["entity_id"] != entity_id:
+            params_entity = service_params["entity_id"]
             reason = (
                 f"contradictory target: service_params names {params_entity!r} but policy "
-                f"was evaluated for {entity_id!r}; pass the target once"
+                f"was evaluated for {entity_id!r}; pass the target once, and evaluate "
+                "each entity of a multi-entity call separately"
             )
             audit_result = EnforcementResult(
                 allowed=False,

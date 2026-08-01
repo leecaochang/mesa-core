@@ -166,9 +166,9 @@ class FastMCPRegistry:
         unknown key is dropped before dispatch rather than rejected: a query with
         a mistyped filter name would silently run unfiltered. Flipping the model
         to ``extra='forbid'`` makes both the published schema and the transport
-        agree with the declared schema. The fastmcp 2.x/3.x lineage already
-        forbids extras and exposes no ``_tool_manager``, so this is a no-op
-        there; the handler-level validator remains the cross-transport backstop.
+        agree with the declared schema. The standalone fastmcp lineage already
+        forbids extras, so this is a no-op there; the handler-level validator
+        remains the cross-transport backstop either way.
         """
         manager = getattr(self.server, "_tool_manager", None)
         get_tool = getattr(manager, "get_tool", None)
@@ -181,6 +181,16 @@ class FastMCPRegistry:
         # only the transport-level extra-key rejection on this lineage is lost.
         try:
             tool: Any = get_tool(name)
+            if inspect.isawaitable(tool):
+                # standalone fastmcp 2.x exposes a _tool_manager whose get_tool
+                # is a coroutine function. That lineage already forbids extras,
+                # so there is nothing to fix here; close the coroutine rather
+                # than leaving it unawaited, which would emit a RuntimeWarning
+                # per registered tool.
+                close = getattr(tool, "close", None)
+                if close is not None:
+                    close()
+                return
             arg_model = getattr(getattr(tool, "fn_metadata", None), "arg_model", None)
             if arg_model is None:
                 return

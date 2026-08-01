@@ -38,10 +38,12 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-# Upper bounds are deliberate: both adapters target these frameworks' current
-# major APIs, and the MCP SDK v2 rewrite already moves the import paths the
-# raw and FastMCP adapters use.
-fastmcp = ["fastmcp<4"]
+# Both bounds are verified, not guessed. fastmcp 2.12 is the oldest release the
+# adapter tests pass against (2.10 and 2.11 do not import on the supported
+# Pythons, and 2.0 fails at server construction); 3.x passes in full, and the
+# upper bound holds the line at the next major. The MCP SDK v2 rewrite moves
+# the import paths both adapters use, so that extra stays on v1.
+fastmcp = ["fastmcp>=2.12,<4"]
 mcp = ["mcp>=1.27,<2"]
 test = ["pytest>=8", "jsonschema>=4", "pyyaml>=6"]
 dev = ["ruff>=0.6", "mypy>=1.11", "pytest>=8", "jsonschema>=4", "pyyaml>=6"]
