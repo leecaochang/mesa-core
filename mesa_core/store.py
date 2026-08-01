@@ -14,7 +14,7 @@ import json
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any
 
 from mesa_core import validation
 from mesa_core.backends import StorageBackend
@@ -40,10 +40,7 @@ _DEVICE_PREFIX = "__device__:"
 MAX_PAGE_SIZE = 200
 
 
-_EnumT = TypeVar("_EnumT", bound=StrEnum)
-
-
-def _parse_enum(enum: type[_EnumT], value: Any, where: str) -> _EnumT:
+def _parse_enum[EnumT: StrEnum](enum: type[EnumT], value: Any, where: str) -> EnumT:
     """Parse an enum value into a MesaValidationError rather than a raw ValueError."""
     try:
         return enum(value)

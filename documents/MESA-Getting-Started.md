@@ -197,10 +197,15 @@ from mesa_core.exceptions import MesaEnforcementError
 
 enforcer = MesaEnforcer(store)
 
-# Before passing any service call to HA:
+# Before passing any service call to HA. Two details matter:
+#  - `service` is the canonical "domain.service", e.g. "media_player.volume_set".
+#  - `service_params` must be the REAL parameters of the call. A declared limit
+#    whose parameter is missing from service_params is skipped, so passing
+#    nothing here silently drops volume, brightness, and temperature caps.
 result = enforcer.evaluate(
     entity_id=entity_id,
-    service=service_name,
+    service=f"{domain}.{service}",
+    service_params={"entity_id": entity_id, **service_params},
     caller_context=caller_ctx,
     current_time=datetime.now()
 )
@@ -208,22 +213,37 @@ if not result.allowed:
     if result.confirmation_challenge is not None:
         # control_mode: confirm. This is not a refusal: return the challenge
         # to the agent, let it show the user what is about to happen, and
-        # resubmit the same call with the token from the approved challenge.
-        # Raising here instead makes confirmation impossible, which turns
-        # every confirm entity into a prohibited one.
+        # resubmit with the token from the approved challenge. Raising here
+        # instead makes confirmation impossible, which turns every confirm
+        # entity into a prohibited one.
         return {"requires_confirmation": result.confirmation_challenge}
     raise MesaEnforcementError(result.reason)
 # proceed with service call
 ```
 
-On the resubmitted call, pass the approved token through `confirmation_token`;
-the enforcer verifies the round-trip and that the parameters still match the
-ones the user approved (Specification 6.6). See the Module Proposal for the
-full challenge and token shapes.
+The resubmitted call is the same call plus the approved token:
+
+```python
+result = enforcer.evaluate(
+    entity_id=entity_id,
+    service=f"{domain}.{service}",
+    service_params={"entity_id": entity_id, **service_params},
+    caller_context=caller_ctx,
+    current_time=datetime.now(),
+    confirmation_token=approved_token,      # the dict from the approved challenge
+)
+```
+
+The enforcer verifies the round-trip and that the parameters still match the
+ones the user approved, so a token cannot be replayed against a different call
+(Specification 6.6). See the Module Proposal for the full challenge and token
+shapes.
 
 **Step 4: Declare your conformance level.**
 
-Level 1 (profile consumer) is about reading profiles and respecting what they say: parse them, surface `metadata_origin` to your decision logic, weight inferred profiles lower, treat a missing `control_mode` as `confirm`, and never expose an entity to a caller its `deny_for` names. None of that requires the MCP tools, so Level 1 needs Step 1 and the storage setup, not Step 2. Level 2 adds authoring and storing profiles, including stamping `metadata_origin` on everything you generate. Level 3 is what Steps 2 and 3 build: the retrieval tools, enforcement, and optionally the lease protocol. Start at Level 1 and add capabilities incrementally. The full requirement list per level is in Specification Section 2.
+Level 1 (profile consumer) is about reading profiles and respecting what they say: parse them, surface `metadata_origin` to your decision logic, weight inferred profiles lower, treat a missing `control_mode` as `confirm`, and never expose an entity to a caller its `deny_for` names. None of that requires the MCP tools, so Level 1 needs Step 1 and the storage setup, not Step 2. Level 2 adds authoring and storing profiles, including stamping `metadata_origin` on everything you generate.
+
+The steps above are the *foundation* of Level 3, not Level 3 itself. A conforming Level 3 server also authenticates every request, supplies the resolver callbacks for device, area, and integration inheritance, supplies caller context so `access_roles` can isolate anyone, supports the full filter set and pagination, and meets the Level 2 authoring requirements underneath. The Module Proposal's Full Integration example shows all of that wired together; the checklist itself is Specification Section 2. Start at Level 1 and add capabilities incrementally, and declare the level you actually meet rather than the one you are building toward.
 
 **Step 5: Tell your users.**
 

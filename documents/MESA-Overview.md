@@ -187,4 +187,4 @@ AI-inferred profiles are explicitly marked as lower-trust. An agent that generat
 
 ---
 
-*MESA - Metadata and Environment Semantics for Agents. Version 1.0.*
+*MESA - Metadata and Environment Semantics for Agents. Overview, version 1.1. Describes MESA 1.1.*

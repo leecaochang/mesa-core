@@ -286,8 +286,18 @@ class SemanticProfile:
         """Declared confidence, or 1.0 for trusted origins and 0.0 otherwise."""
         ...
 
+    # known_entity_ids is a Collection, not an Iterable: it is read more than
+    # once per evaluation, so a one-shot iterable would read as an empty
+    # registry the second time and invent removal warnings.
+    def freshness(self, now: Optional[datetime] = None, *,
+                  known_entity_ids: Optional[Collection[str]] = None,
+                  integration_version: Optional[str] = None,
+                  ha_version: Optional[str] = None) -> FreshnessReport:
+        """Staleness status and invalidation warnings from ONE evaluation."""
+        ...
+
     def staleness_status(self, now: Optional[datetime] = None, *,
-                         known_entity_ids: Optional[Iterable[str]] = None,
+                         known_entity_ids: Optional[Collection[str]] = None,
                          integration_version: Optional[str] = None,
                          ha_version: Optional[str] = None) -> str:
         """current / stale / unknown (Spec 5.4), including fired
@@ -295,12 +305,23 @@ class SemanticProfile:
         ...
 
     def validity_warnings(self, *, now: Optional[datetime] = None,
-                          known_entity_ids: Optional[Iterable[str]] = None,
+                          known_entity_ids: Optional[Collection[str]] = None,
                           integration_version: Optional[str] = None,
                           ha_version: Optional[str] = None) -> List[str]:
         """Advisory warnings from the profile_valid_for triggers (Spec 5.5)."""
         ...
+
+@dataclass
+class FreshnessReport:
+    status: str                                  # current / stale / unknown
+    warnings: List[str] = field(default_factory=list)
 ```
+
+**Freshness evaluation.** `staleness_status()` and `validity_warnings()` read
+the same `profile_valid_for` triggers, so a caller wanting both should call
+`freshness()` rather than each in turn: one evaluation cannot report a status
+and a warning set that disagree, two can. `FreshnessReport` is exported from
+the package root.
 
 ### 4.2 ProfileStore
 
@@ -1013,18 +1034,25 @@ lease_manager = LeaseManager(store)
 
 # Authentication is YOUR job, not mesa-core's: Specification 9.1 requires
 # Level 3 servers to reject unauthenticated requests with HA-equivalent
-# authentication, and mesa-core never sees your transport. Reject at the
-# transport, BEFORE a tool handler runs. Raising from the caller-context
-# callback does not work: the handlers catch exceptions and answer
-# server_error, not the unauthorized envelope of Specification 9.6.
-@app.middleware
-async def require_authentication(request, call_next):
-    session = session_for(request)
-    if session is None or not session.is_authenticated:
-        return {"error": "unauthorized",
-                "message": "authentication required",
-                "details": {}}
-    return await call_next(request)
+# authentication, and mesa-core never sees your transport. Reject there,
+# BEFORE a tool handler runs. Raising from the caller-context callback does
+# not work: the handlers catch exceptions and answer server_error, not the
+# unauthorized envelope of Specification 9.6.
+#
+# How you gate depends on which server you run. With the MCP Python SDK's
+# FastMCP (imported above), pass a token verifier and auth settings at
+# construction:
+#
+#     from mcp.server.auth.settings import AuthSettings
+#     app = FastMCP(
+#         "my-ha-mcp-server",
+#         token_verifier=MyTokenVerifier(),      # verifies the bearer token
+#         auth=AuthSettings(issuer_url=..., resource_server_url=...),
+#     )
+#
+# With standalone FastMCP, register middleware instead
+# (`app.add_middleware(...)`; `app.middleware` is a list, not a decorator).
+# Either way the unauthenticated request never reaches a MESA tool.
 
 # Caller context function (host server provides this). mesa-core applies
 # access_roles before surfacing any profile, so without this the base privacy
@@ -1050,13 +1078,15 @@ def get_caller_context() -> CallerContext:
 # Without this callback these triggers cannot be evaluated and an invalidated
 # profile keeps reporting staleness_status: current (Spec 5.4).
 # review_after_days needs nothing from the host.
-def get_validity_context(entity_id: str) -> dict:
+def get_validity_context(entity_id: str) -> dict:      # synchronous, like the resolver callbacks
     context = {
-        # Must be COMPLETE and reusable: anything missing reads as a removed
-        # entity and produces a false invalidation. Enumerate the entity
-        # registry itself, not the display/UI endpoint, which omits disabled
-        # entities. A set or list, never a generator.
-        "known_entity_ids": hass_entity_ids(),
+        # Must be COMPLETE: anything missing reads as a removed entity and
+        # produces a false invalidation. Neither source alone is complete, so
+        # union them: the entity registry omits entities that have no unique
+        # ID (they exist only as states), while current states omit disabled
+        # entities (they exist only in the registry). Do not use the
+        # display/UI registry endpoint, which also drops disabled entities.
+        "known_entity_ids": set(registry_entity_ids()) | set(state_entity_ids()),
         "ha_version": hass_version(),
     }
     # Core integrations do not carry manifest.version (Home Assistant requires
@@ -1083,16 +1113,30 @@ register_mesa_tools(
 
 # Wrap your service call handler with MESA enforcement
 @app.tool()
-async def call_ha_service(domain: str, service: str, entity_id: str, **kwargs):
-    # Evaluate MESA profile before calling HA
+async def call_ha_service(domain: str, service: str, entity_id: str,
+                          confirmation_token: Optional[dict] = None, **kwargs):
+    # Evaluate MESA profile before calling HA. Pass the REAL parameters: a
+    # declared limit whose parameter is absent from service_params is skipped,
+    # so omitting kwargs silently drops volume, brightness, and temperature
+    # caps (Specification 6.4).
     result = await enforcer.aevaluate(
         entity_id=entity_id,
         service=f"{domain}.{service}",
         service_params={"entity_id": entity_id, **kwargs},
         caller_context=get_caller_context(),
-        current_time=datetime.now()
+        current_time=datetime.now(),
+        # On resubmission, the token the user approved. The enforcer verifies
+        # the round-trip and that the parameters still match the approved ones
+        # (Specification 6.6).
+        confirmation_token=confirmation_token,
     )
     if not result.allowed:
+        if result.confirmation_challenge is not None:
+            # control_mode: confirm. Not a refusal: hand the challenge back to
+            # the agent, which shows the user what is about to happen and
+            # resubmits this call with the approved token. Raising here instead
+            # turns every confirm entity into a prohibited one.
+            return {"requires_confirmation": result.confirmation_challenge}
         raise MesaEnforcementError(result.reason)
     # Proceed with HA API call
     ...
@@ -1123,8 +1167,9 @@ register_mesa_tools(store=store, adapter=MyFrameworkRegistry(), server=app)
 
 Import both names. Python evaluates annotations eagerly before 3.14, so
 annotating `handler` with a `ToolHandler` you did not import raises
-`NameError` at class definition time on the 3.11 through 3.13 interpreters
-this package supports.
+`NameError` at class definition time on the 3.12 and 3.13 interpreters this
+package supports (3.14 defers annotation evaluation, so it does not raise
+there: an example that works on your interpreter can still break a user's).
 
 All four parameters are required: `register_mesa_tools` passes the tool's
 description positionally alongside its schema, so a `register_tool` accepting
@@ -1149,7 +1194,7 @@ mesa-core never talks to Home Assistant. Every piece of HA registry or state kno
 | `expand_target` | `TriggerValidator`, `entities_by_role` | Indirect references (device triggers, purpose-specific trigger target selectors) are invisible; a stale `none` declaration behind them passes unflagged. |
 | `caller_context_fn` | `register_mesa_tools` | Tools respond as an anonymous, role-less caller; lease session scoping degrades. |
 | `get_semantic_moments` | `register_mesa_tools` / `MesaToolHandlers` | `mesa_get_profile` never includes the `semantic_moments` block; agents fall back to profile-declared automation semantics. |
-| `get_validity_context` | `register_mesa_tools` / `MesaToolHandlers` | The `profile_valid_for` registry and version triggers cannot be evaluated, so an invalidated profile keeps reporting `staleness_status: current` and no invalidation warning is surfaced (Specification 5.4, 5.5). `review_after_days` is evaluated either way. |
+| `get_validity_context` | `register_mesa_tools` / `MesaToolHandlers` | The `profile_valid_for` registry and version triggers cannot be evaluated, so an invalidated profile keeps reporting `staleness_status: current` and no invalidation warning is surfaced (Specification 5.4, 5.5). `review_after_days` is evaluated either way. Called once per entity, with that entity's ID. Must be synchronous, like the resolver callbacks: an `async def` returns a coroutine rather than a context, which mesa-core refuses with a logged warning rather than reading as an empty context. Values are type-checked, and a wrong-typed one is dropped with a warning; `known_entity_ids` may be any iterable of entity IDs (a generator is materialised for you) but never a bare string. |
 | `on_lease_event` | `LeaseManager` | `mesa_lease_expired` events are not bridged to the HA event bus. |
 
 ---
@@ -1331,7 +1376,7 @@ pytest
 
 **Required (core):**
 
-- Python 3.11 or later
+- Python 3.12 or later
 - No external dependencies for the core package. All profile parsing, inheritance resolution, conflict resolution, temporal evaluation, and privacy enforcement use only the Python standard library.
 
 **Optional:**

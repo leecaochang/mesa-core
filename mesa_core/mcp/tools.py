@@ -12,8 +12,9 @@ Errors are returned as the Spec 9.6 envelope:
 
 from __future__ import annotations
 
+import inspect
 import logging
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from mesa_core.exceptions import (
@@ -37,6 +38,27 @@ MESA_VERSION = "1.1"
 # component_type values derivable from an entity ID's domain (Spec 9.3).
 # Results are always entity-keyed, so scoped component types never occur.
 _COMPONENT_DOMAINS = {"automation", "scene", "zone", "person"}
+
+
+def _entity_id_set(value: Any) -> frozenset[str] | None:
+    """Normalise a host-supplied entity registry, or None when it is unusable.
+
+    A bare string is refused rather than iterated: ``"light.x"`` is itself a
+    collection of characters, so accepting it would report every real entity as
+    removed. Any other iterable of strings is materialised here, which is what
+    makes a generator safe to return from the host callback: the set is read
+    more than once during evaluation, and a one-shot value would read as an
+    empty registry the second time.
+    """
+    if isinstance(value, str) or not isinstance(value, Iterable):
+        return None
+    try:
+        items = list(value)
+    except TypeError:
+        return None
+    if not all(isinstance(item, str) for item in items):
+        return None
+    return frozenset(items)
 
 
 def _component_type(entity_id: str) -> str:
@@ -188,25 +210,74 @@ class MesaToolHandlers:
         an invalidated profile keeps reporting ``current`` (Spec 5.4).
 
         Status and warnings come from one evaluation (Spec 5.4 and 5.5 read the
-        same triggers), so they cannot disagree. Unknown keys are ignored, and
-        a raising or wrong-typed callback degrades to no context rather than
-        failing the request.
+        same triggers), so they cannot disagree.
+
+        The callback must be synchronous, and every value it supplies is
+        type-checked before use. A wrong-typed value is dropped with a logged
+        warning rather than evaluated: the failure modes are silent and
+        wrong-way-round otherwise, because a bare string is itself a collection
+        of characters (so an entity registry given as ``"light.x"`` would report
+        every real entity missing) and a non-iterable would raise out of the
+        handler as a ``server_error``. Unknown keys are ignored, and a raising
+        callback degrades to no context.
         """
+        supplied = self._supplied_context(entity_id)
         context: dict[str, Any] = {}
-        if self.get_validity_context is not None:
-            try:
-                supplied = self.get_validity_context(entity_id)
-            except Exception:
-                logger.exception("get_validity_context failed for %s", entity_id)
-                supplied = None
-            if isinstance(supplied, dict):
-                context = {key: supplied[key] for key in self._VALIDITY_KEYS if key in supplied}
-        known = context.get("known_entity_ids")
-        if known is not None and not isinstance(known, Collection):
-            # A one-shot iterable would be consumed by the first check and read
-            # as an empty registry by the next, inventing removal warnings.
-            context["known_entity_ids"] = frozenset(known)
+        for key in self._VALIDITY_KEYS:
+            if key not in supplied:
+                continue
+            value = supplied[key]
+            if key == "known_entity_ids":
+                normalised = _entity_id_set(value)
+                if normalised is None:
+                    logger.warning(
+                        "get_validity_context returned a %s for known_entity_ids on %s; "
+                        "expected an iterable of entity IDs, ignoring it",
+                        type(value).__name__,
+                        entity_id,
+                    )
+                    continue
+                context[key] = normalised
+            elif isinstance(value, str):
+                context[key] = value
+            else:
+                logger.warning(
+                    "get_validity_context returned a %s for %s on %s; expected a "
+                    "version string, ignoring it",
+                    type(value).__name__,
+                    key,
+                    entity_id,
+                )
         return effective.freshness(**context)
+
+    def _supplied_context(self, entity_id: str) -> dict[str, Any]:
+        if self.get_validity_context is None:
+            return {}
+        try:
+            supplied = self.get_validity_context(entity_id)
+        except Exception:
+            logger.exception("get_validity_context failed for %s", entity_id)
+            return {}
+        if inspect.isawaitable(supplied):
+            # An async callback returns a coroutine, which would otherwise read
+            # as "not a dict" and silently disable every invalidation check.
+            close = getattr(supplied, "close", None)
+            if close is not None:
+                close()  # nothing awaits it; closing avoids a spurious warning
+            logger.warning(
+                "get_validity_context must be synchronous; an async callback returns a "
+                "coroutine, so invalidation triggers cannot be evaluated for %s",
+                entity_id,
+            )
+            return {}
+        if not isinstance(supplied, dict):
+            if supplied is not None:
+                logger.warning(
+                    "get_validity_context returned a %s, expected a dict; ignoring it",
+                    type(supplied).__name__,
+                )
+            return {}
+        return supplied
 
     def _caller_context(self) -> CallerContext | None:
         if self.caller_context_fn is None:

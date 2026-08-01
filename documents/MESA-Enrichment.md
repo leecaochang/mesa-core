@@ -1,6 +1,5 @@
 # MESA Enrichment Specification
-**Version:** 1.0
-**Describes:** MESA 1.1 (Sections 10-21 unchanged since MESA 1.0)
+**Version:** 1.1
 **Document Type:** Formal Schema Reference (companion to the MESA Specification)
 
 ---
@@ -456,7 +455,7 @@ To expose lease status to native automations, Level 3 host servers SHOULD expose
 4. At `expires_at`, the lease automatically terminates.
 5. Agent MAY call `mesa_release_lease` early to signal completion.
 
-Leases are scoped to `session_id`. Session termination releases all associated leases automatically.
+Leases are scoped to `session_id`, and terminating a session releases all of its leases in one operation. That release is a host responsibility: the lease manager holds no transport and cannot observe a disconnect, so a Level 3 host MUST release a session's leases when its connection ends (mesa-core exposes `release_session()` for this). Without it, an abandoned session's holds survive until each lease's own expiry, blocking other agents for up to the maximum lease duration.
 
 **`binary_sensor.mesa_lease_active` schema.** Level 3 host servers SHOULD expose a `binary_sensor.mesa_lease_active` entity to allow native automations to participate voluntarily in the coordination protocol.
 

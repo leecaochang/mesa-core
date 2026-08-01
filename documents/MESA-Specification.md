@@ -275,7 +275,7 @@ MESA is additive. Systems that do not expose `semantic_profile` remain fully con
 | `profile_version` | `string` | SHOULD | Version of this specific profile. Implementor-defined. |
 | `metadata_origin` | `object` | RECOMMENDED | Profile provenance. See Section 5.3. When absent, the default depends on the profile's location: profiles loaded from an integration's `mesa_profile.json` default to `source: developer`; profiles from any other location default to `source: unknown`. See Section 5.3. |
 | `semantic_tags` | `array<string>` | RECOMMENDED | Namespaced tags classifying this component. See Appendix A. |
-| `last_updated` | `string` | SHOULD | ISO 8601 timestamp of most recent modification. Required in practice when `profile_valid_for.review_after_days` is declared, which counts from it (Section 5.5). |
+| `last_updated` | `string` | SHOULD | ISO 8601 timestamp of most recent modification. Needed in practice when `profile_valid_for.review_after_days` is declared, which counts from it and is unevaluable without it (Section 5.5). |
 | `inheritance_scope` | `enum` | RECOMMENDED | How this profile applies in the inheritance hierarchy. `entity` (applies to this entity only, default), `domain` (applies to all entities of one HA entity domain, e.g. all `lock.*`), `integration` (applies to all entities created by one integration; the `mesa_profile.json` sidecar default), `area` (applies to all entities assigned to this area), `device` (applies to all entities belonging to one HA device registry entry). See Section 5.6. |
 | `profile_valid_for` | `object` | MAY | Conditions under which this profile should be reviewed. See Section 5.5. |
 
@@ -352,7 +352,7 @@ Human-authored profiles do not decay with age, but the deployment can change aro
 |---|---|---|
 | `integration_version` | `string` | Integration version this profile was authored against. Home Assistant requires `manifest.version` only for custom integrations, so this trigger is evaluable for those; profiles describing core-integration entities SHOULD pin `ha_version` instead. |
 | `ha_version` | `string` | HA version at time of authoring. |
-| `review_after_days` | `number` | Flag for review after this many days regardless of other conditions. Counted from `last_updated`, falling back to `metadata_origin.generated_at`. A profile declaring this trigger MUST carry one of them; with neither there is nothing to count from and the trigger can never fire, so hosts report it as unevaluable rather than as satisfied. |
+| `review_after_days` | `number` | Flag for review after this many days regardless of other conditions. Counted from `last_updated`, falling back to `metadata_origin.generated_at`. A profile declaring this trigger SHOULD carry one of them; with neither there is nothing to count from, so the trigger can never fire and hosts report it as unevaluable rather than as satisfied. This is a SHOULD rather than a MUST because the profile remains well-formed and every other field of it stays usable: the cost is one silently inert trigger, which the unevaluable report makes audible. |
 | `invalidated_by_entities` | `array<string>` | Entity IDs whose removal or renaming triggers invalidation. |
 
 ```json

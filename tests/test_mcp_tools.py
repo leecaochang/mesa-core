@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from mesa_core.backends import MemoryBackend
 from mesa_core.lease import LeaseManager
 from mesa_core.mcp.adapters import DictToolRegistry
@@ -727,3 +729,110 @@ def test_one_shot_context_values_cannot_produce_contradictory_answers() -> None:
     assert "warnings" not in got
     assert queried["results"][0]["staleness_status"] == "current"
     assert "warnings" not in queried
+
+
+# --------- validity context is type-checked and synchronous (audit 13 F6/F9)
+
+
+def _invalidating_store() -> ProfileStore:
+    store = ProfileStore(backend=MemoryBackend())
+    store.set(
+        "light.x",
+        SemanticProfile.from_dict(
+            "light.x",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {
+                        "source": "inferred_ai",
+                        "confidence": 0.9,
+                        "generated_at": "2026-07-30T00:00:00+00:00",
+                    },
+                    "profile_valid_for": {"invalidated_by_entities": ["light.x"]},
+                }
+            },
+        ),
+    )
+    return store
+
+
+def _with_context(context: Any) -> DictToolRegistry:
+    registry = DictToolRegistry()
+    register_mesa_tools(
+        _invalidating_store(), adapter=registry, get_validity_context=lambda _eid: context
+    )
+    return registry
+
+
+def test_registry_given_as_a_bare_string_is_refused() -> None:
+    # "light.x" is itself a collection of characters, so iterating it would
+    # report every real entity as removed.
+    out = call(_with_context({"known_entity_ids": "light.x"}), "mesa_get_profile", entity_id="light.x")
+    assert out["staleness_status"] == "current"
+    assert "warnings" not in out
+
+
+def test_non_iterable_registry_does_not_fail_the_request() -> None:
+    out = call(_with_context({"known_entity_ids": 42}), "mesa_get_profile", entity_id="light.x")
+    assert out["entity_id"] == "light.x"
+    assert out["staleness_status"] == "current"
+
+
+def test_registry_with_non_string_members_is_refused() -> None:
+    out = call(
+        _with_context({"known_entity_ids": ["light.x", 7]}), "mesa_get_profile", entity_id="light.x"
+    )
+    assert out["staleness_status"] == "current"
+
+
+def test_non_string_versions_are_refused() -> None:
+    registry = DictToolRegistry()
+    store = ProfileStore(backend=MemoryBackend())
+    store.set(
+        "light.x",
+        SemanticProfile.from_dict(
+            "light.x",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {
+                        "source": "inferred_ai",
+                        "confidence": 0.9,
+                        "generated_at": "2026-07-30T00:00:00+00:00",
+                    },
+                    "profile_valid_for": {"integration_version": "2.4.1"},
+                }
+            },
+        ),
+    )
+    register_mesa_tools(
+        store, adapter=registry, get_validity_context=lambda _eid: {"integration_version": 3}
+    )
+    out = call(registry, "mesa_get_profile", entity_id="light.x")
+    assert out["staleness_status"] == "current"
+    assert "warnings" not in out
+
+
+def test_generator_registry_is_accepted_and_materialised() -> None:
+    # The host contract accepts any iterable; mesa-core materialises it, so a
+    # registry scan returning a generator is safe.
+    out = call(
+        _with_context({"known_entity_ids": (e for e in ["light.x"])}),
+        "mesa_get_profile",
+        entity_id="light.x",
+    )
+    assert out["staleness_status"] == "current"
+
+
+def test_async_validity_context_is_refused_not_silently_ignored(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def async_context(entity_id: str) -> dict[str, Any]:
+        return {"known_entity_ids": ["light.x"]}
+
+    registry = DictToolRegistry()
+    register_mesa_tools(
+        _invalidating_store(), adapter=registry, get_validity_context=async_context
+    )
+    with caplog.at_level("WARNING", logger="mesa_core.mcp"):
+        out = call(registry, "mesa_get_profile", entity_id="light.x")
+    assert out["entity_id"] == "light.x"
+    assert any("must be synchronous" in record.message for record in caplog.records)
