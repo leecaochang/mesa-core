@@ -1,5 +1,5 @@
 # MESA Getting Started Guide
-**Version:** 1.0
+**Version:** 1.1
 **Document Type:** Practical Implementation Guide
 
 ---
@@ -34,6 +34,7 @@ By the end of this guide you will have added a valid MESA profile to at least on
    - 5.3 [A custom diagnostic sensor](#53-a-custom-diagnostic-sensor)
    - 5.4 [A cloud TTS integration with dual connection modes](#54-a-cloud-tts-integration-with-dual-connection-modes)
    - 5.5 [An operator-added entity profile](#55-an-operator-added-entity-profile)
+   - 5.6 [A device-scope profile for a camera](#56-a-device-scope-profile-for-a-camera)
 6. [Choosing Semantic Tags](#6-choosing-semantic-tags)
 7. [What Good Enough Looks Like](#7-what-good-enough-looks-like)
 8. [Common Mistakes](#8-common-mistakes)
@@ -225,7 +226,7 @@ Create it with `semantic_profile` and `privacy_classification` as top-level keys
 ```json
 {
   "semantic_profile": {
-    "schema_version": "1.0",
+    "schema_version": "1.1",
     "metadata_origin": {"source": "developer", "confidence": 1.0},
     "semantic_tags": ["diagnostic.causality"],
     "operational_boundaries": {
@@ -305,8 +306,9 @@ This supplements the built-in baseline with your deployment-specific decisions. 
 **Priority order:**
 1. Mode flag helpers (`input_boolean.cinema_mode`, `input_boolean.guest_mode`, `input_boolean.vacation_mode`). These control dozens of automations. An agent that toggles one carelessly may cause broad disruption.
 2. Security entities (`lock.front_door`, `alarm_control_panel.home`). Always `control_mode: confirm` or `prohibited`.
-3. Climate entities where you have specific constraints (min/max temperatures, schedule restrictions).
-4. Media players where you have volume limits at night or during certain modes.
+3. Multi-entity physical devices, especially cameras, microphones, and presence sensors. Profile the device once instead of its fourteen entities: a single device-scope profile covers every entity the device owns, including entities a future firmware update adds. See the device profile section below.
+4. Climate entities where you have specific constraints (min/max temperatures, schedule restrictions).
+5. Media players where you have volume limits at night or during certain modes.
 
 **Adding profiles through your MCP server.** Open your host MCP server's configuration interface and add profiles by entity ID. The examples below show the YAML you would enter there.
 
@@ -314,7 +316,7 @@ This supplements the built-in baseline with your deployment-specific decisions. 
 
 ```yaml
 semantic_profile:
-  schema_version: "1.0"
+  schema_version: "1.1"
   metadata_origin:
     source: user
     confidence: 1.0
@@ -340,7 +342,7 @@ For `input_boolean.cinema_mode`:
 
 ```yaml
 semantic_profile:
-  schema_version: "1.0"
+  schema_version: "1.1"
   metadata_origin:
     source: user
     confidence: 1.0
@@ -368,6 +370,25 @@ privacy_classification:
 ```
 
 This tells the agent exactly what happens when this helper changes. The `true_meaning` and `false_meaning` fields are the most valuable part of a mode flag profile.
+
+**Profiling a whole physical device (MESA 1.1).** One physical device usually exposes several entities: a camera device might expose `camera.nursery`, `binary_sensor.nursery_motion`, and `sensor.nursery_sound_level`. When your intent is about the physical object ("everything this camera produces is sensitive", "hands off this relay"), write one device-scope profile instead of repeating it per entity. The profile is keyed by the HA device registry ID, which you can find under Settings, then Devices and Services, then the device page (the ID is in the page URL). It applies to every entity the device owns, ranks above area and below entity in inheritance, and automatically covers entities the device grows later, which per-entity profiles never do.
+
+```yaml
+semantic_profile:
+  schema_version: "1.1"
+  inheritance_scope: device
+  metadata_origin:
+    source: user
+    confidence: 1.0
+  semantic_tags:
+    - security.camera
+privacy_classification:
+  level: restricted
+  contains_visual_capture: true
+  contains_audio_capture: true
+```
+
+Two things to know. First, your host server needs the entity-to-device mapping from the HA registries for device profiles to resolve; every maintained host provides it, but on one that does not, device profiles are simply inert (they never fail open). Second, device profiles can tighten but never loosen: `override_control_mode` works only on entity-level profiles.
 
 ---
 
@@ -426,6 +447,9 @@ Please generate the profile.
 Entity details:
 - Entity ID: [entity_id]
 - Domain: [light / lock / input_boolean / etc.]
+- If my intent is really about the physical device that owns this entity
+  (a camera, a multi-sensor, a power strip), suggest a device-scope profile
+  instead and tell me it needs the HA device registry ID.
 - What this entity does: [describe its purpose in your home]
 - What automations use it or respond to it: [list them if you know]
 - Should an AI agent be able to control this automatically? [yes / no / ask first]
@@ -522,7 +546,7 @@ These three profiles cover the most common footguns in smart home AI orchestrati
 ```json
 {
   "semantic_profile": {
-    "schema_version": "1.0",
+    "schema_version": "1.1",
     "metadata_origin": {"source": "user", "confidence": 1.0},
     "semantic_tags": ["lighting.ambient"],
     "operational_boundaries": {
@@ -543,7 +567,7 @@ These three profiles cover the most common footguns in smart home AI orchestrati
 ```json
 {
   "semantic_profile": {
-    "schema_version": "1.0",
+    "schema_version": "1.1",
     "metadata_origin": {"source": "user", "confidence": 1.0},
     "semantic_tags": ["security.access_control"],
     "operational_boundaries": {
@@ -565,7 +589,7 @@ These three profiles cover the most common footguns in smart home AI orchestrati
 
 ```yaml
 semantic_profile:
-  schema_version: "1.0"
+  schema_version: "1.1"
   metadata_origin:
     source: user
     confidence: 1.0
@@ -606,7 +630,7 @@ A custom integration for a specific smart bulb brand. Supports RGB colour and sm
 ```json
 {
   "semantic_profile": {
-    "schema_version": "1.0",
+    "schema_version": "1.1",
     "metadata_origin": {"source": "developer", "confidence": 1.0},
     "semantic_tags": ["lighting.colour", "lighting.dimming", "lighting.ambient"],
     "operational_boundaries": {
@@ -636,7 +660,7 @@ This is the kernel plus two optional enrichment fields. Total authoring time: th
 
 ```yaml
 semantic_profile:
-  schema_version: "1.0"
+  schema_version: "1.1"
   metadata_origin:
     source: user
     confidence: 1.0
@@ -680,7 +704,7 @@ A sensor that tracks which entity or person last triggered a motion-sensitive li
 ```json
 {
   "semantic_profile": {
-    "schema_version": "1.0",
+    "schema_version": "1.1",
     "metadata_origin": {"source": "developer", "confidence": 1.0},
     "semantic_tags": [
       "diagnostic.causality",
@@ -801,7 +825,7 @@ Note how vendor namespace tags handle the implementation-specific details while 
 ```json
 {
   "semantic_profile": {
-    "schema_version": "1.0",
+    "schema_version": "1.1",
     "metadata_origin": {"source": "developer", "confidence": 1.0},
     "semantic_tags": [
       "tts.multilingual",
@@ -893,7 +917,7 @@ An operator adding a MESA profile to `lock.front_door` through a host MCP server
 
 ```yaml
 semantic_profile:
-  schema_version: "1.0"
+  schema_version: "1.1"
   metadata_origin:
     source: user
     confidence: 1.0
@@ -936,6 +960,35 @@ privacy_classification:
 ```
 
 This profile does not require any changes to the lock integration. It is applied at the entity level through the MCP server configuration. The declared limit prevents locking an open door. The temporal constraint adds an additional nighttime restriction.
+
+---
+
+### 5.6 A device-scope profile for a camera
+
+The same operator restricts a nursery camera. The physical device exposes three entities (`camera.nursery`, `binary_sensor.nursery_motion`, `sensor.nursery_sound_level`), and the intent is about the hardware, so one device-scope profile replaces three entity profiles. The key is the HA device registry ID.
+
+```yaml
+semantic_profile:
+  schema_version: "1.1"
+  inheritance_scope: device
+  metadata_origin:
+    source: user
+    confidence: 1.0
+  semantic_tags:
+    - security.camera
+    - presence.occupancy
+  last_updated: "2026-08-01T10:00:00+07:00"
+  operational_boundaries:
+    control_mode: confirm
+    side_effect_scope: device_localized
+privacy_classification:
+  level: restricted
+  contains_visual_capture: true
+  contains_audio_capture: true
+  deny_response_mode: silent
+```
+
+Every entity the camera owns now resolves `restricted` privacy and `confirm` control, including any entity a future firmware update adds. Asking the server to explain any of them (`mesa_explain_profile`) shows `provided_by_level: device` for these fields. The nursery thermostat, in the same area but a different device, is unaffected. If one entity of the device needs a different rule, an entity-level profile on it still wins over the device profile.
 
 ---
 
@@ -1100,16 +1153,18 @@ for issue in issues:
     print(f"WARNING: {issue.entity_id} declared none but found in {issue.automation_id} as {issue.role}")
 ```
 
-**`mesa-lint`. Shipped** (`pip install mesa-lint`, https://github.com/sfox38/mesa-lint). A CLI tool and GitHub Action that validates MESA profiles against mesa-core's own validator, so the linter and the library agree on what is malformed by construction. It checks:
-- All seven kernel fields present (`semantic_tags`, `control_mode`, `triggers_automations`, `reversible`, `reversibility_cost`, `side_effect_scope`, `privacy_classification.level`)
-- `metadata_origin.source` present and a valid enum value
-- All predicate operators use canonical tokens or are declared as `ha_condition` type
-- All `semantic_tags` are either canonical or follow `vendorname.qualifier` format
-- `control_mode: autonomous` on security domain entities flagged as a warning
-- `reversible: true` on notification or webhook entities flagged as potentially incorrect
-- `inferred_ai` profiles missing `confidence` or `generated_at` flagged as malformed
+**`mesa-lint`. Shipped** (`pip install mesa-lint`, https://github.com/sfox38/mesa-lint). A CI-friendly CLI that validates MESA profile documents with mesa-core's own validator, so the linter and the library agree on what is malformed by construction: schema violations, invalid enum values, malformed inferred profiles (missing `confidence` or `generated_at`), non-canonical predicate operator tokens, and tag format. On top of validation it adds deployment lint rules:
+- `control_mode: confirm` or `prohibited` without a `control_reason`
+- person entities without a privacy classification
+- `triggers_automations: none` declared on helper entities
+- overly long `true_meaning` / `false_meaning` prose
+- missing `metadata_origin`
+- orphaned profiles (stored keys absent from your entity list)
+- automation cross-checks against declared `triggers_automations: none`, resolved through profile inheritance as of mesa-lint 0.2
 
-**Profile inheritance debugger.** The `mesa_explain_profile` tool (defined in the Specification Section 9.5) returns the full inheritance resolution path for any entity, showing which profile level contributed each effective field and whether any conflict resolution rule was applied. When an agent refuses an action and you cannot tell why, this is the first tool to reach for. MCP servers running mesa-core implementing Level 3 SHOULD expose this tool. Catches missing required fields, invalid operator tokens, and common semantic mistakes. Runs in CI so integration developers get feedback automatically.
+It exits nonzero on findings, so it slots into CI directly. A GitHub Action wrapper and further rules (kernel-field completeness, `autonomous` on security domains, `reversible: true` on notification entities) are roadmap items, not shipped checks.
+
+**Profile inheritance debugger.** The `mesa_explain_profile` tool (defined in the Specification Section 9.5) returns the full inheritance resolution path for any entity, showing which profile level contributed each effective field (including the `device` level as of MESA 1.1) and whether any conflict resolution rule was applied. When an agent refuses an action and you cannot tell why, this is the first tool to reach for. MCP servers running mesa-core implementing Level 3 SHOULD expose this tool.
 
 **Reference profiles for common domains.** Ten well-authored example profiles covering `light`, `climate`, `lock`, `camera`, `media_player`, `cover`, `switch`, `sensor`, `binary_sensor`, and `alarm_control_panel`. Developers can copy and adapt these rather than starting from scratch.
 

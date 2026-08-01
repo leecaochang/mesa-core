@@ -63,7 +63,7 @@ mesa-core provides five capabilities that any MCP server can use independently o
 
 **Privacy enforcement.** Given a caller context (identity and roles) and an entity's privacy classification, mesa-core determines whether the caller may access the entity and what restrictions apply. The host server provides the caller context; mesa-core applies the MESA role resolution rules.
 
-**Profile inheritance and conflict resolution.** When a single entity has profiles at multiple levels (domain, integration, area, entity), mesa-core resolves them into a single effective profile following the rules defined in the MESA Specification (Sections 5.6 and 5.7). The host server receives a fully resolved profile without needing to understand the inheritance logic.
+**Profile inheritance and conflict resolution.** When a single entity has profiles at multiple levels (domain, integration, area, device, entity), mesa-core resolves them into a single effective profile following the rules defined in the MESA Specification (Sections 5.6 and 5.7). The host server receives a fully resolved profile without needing to understand the inheritance logic.
 
 ---
 
@@ -233,7 +233,7 @@ class OperationalBoundaries:
 
 @dataclass
 class ProfileMetadata:
-    schema_version: str = "1.0"
+    schema_version: str = "1.1"
     profile_version: Optional[str] = None
     source: MetadataOrigin = MetadataOrigin.UNKNOWN
     confidence: Optional[float] = None
@@ -321,14 +321,15 @@ class ProfileStore:
         self,
         backend: StorageBackend,
         get_entity_area: Optional[Callable[[str], Optional[str]]] = None,
-        get_entity_integration: Optional[Callable[[str], Optional[str]]] = None
+        get_entity_integration: Optional[Callable[[str], Optional[str]]] = None,
+        get_entity_device: Optional[Callable[[str], Optional[str]]] = None
     ): ...
     def get(self, entity_id: str) -> Optional[SemanticProfile]: ...
     def get_effective(self, entity_id: str) -> SemanticProfile: ...
     def set(self, entity_id: str, profile: SemanticProfile) -> None: ...
     def delete(self, entity_id: str) -> None: ...
-    # Scope profiles (domain-, integration-, and area-level) have symmetric
-    # get/set/delete.
+    # Scope profiles (domain-, integration-, area-, and device-level) have
+    # symmetric get/set/delete.
     def get_domain_profile(self, domain: str) -> Optional[SemanticProfile]: ...
     def set_domain_profile(self, domain: str, profile: SemanticProfile) -> None: ...
     def delete_domain_profile(self, domain: str) -> None: ...
@@ -338,16 +339,22 @@ class ProfileStore:
     def get_area_profile(self, area_id: str) -> Optional[SemanticProfile]: ...
     def set_area_profile(self, area_id: str, profile: SemanticProfile) -> None: ...
     def delete_area_profile(self, area_id: str) -> None: ...
+    def get_device_profile(self, device_id: str) -> Optional[SemanticProfile]: ...
+    def set_device_profile(self, device_id: str, profile: SemanticProfile) -> None: ...
+    def delete_device_profile(self, device_id: str) -> None: ...
     # Key enumeration: stored identifiers per scope, as bare names.
     def entity_keys(self) -> List[str]: ...
     def domain_keys(self) -> List[str]: ...
     def integration_keys(self) -> List[str]: ...
     def area_keys(self) -> List[str]: ...
+    def device_keys(self) -> List[str]: ...
     def query(self, *,
               domains: Optional[List[str]] = None,
               tags: Optional[List[str]] = None,
               tags_match: str = "any",
               areas: Optional[List[str]] = None,
+              devices: Optional[List[str]] = None,
+              integrations: Optional[List[str]] = None,
               intents: Optional[List[str]] = None,
               include_inferred: bool = False,
               origin: Optional[str] = None,
@@ -358,7 +365,11 @@ class ProfileStore:
     def get_deployment_defaults(self) -> DeploymentDefaults: ...
     def set_deployment_defaults(self, defaults: dict) -> None: ...
     def explain(self, entity_id: str) -> ProfileExplanation: ...
-    def find_orphans(self, known_entity_ids: Iterable[str]) -> List[str]: ...
+    def find_orphans(self, known_entity_ids: Iterable[str], *,
+                     known_domains: Optional[Iterable[str]] = None,
+                     known_integrations: Optional[Iterable[str]] = None,
+                     known_areas: Optional[Iterable[str]] = None,
+                     known_devices: Optional[Iterable[str]] = None) -> List[str]: ...
 
     # Every method above also has an `a`-prefixed async variant, e.g.:
     async def aget(self, entity_id: str) -> Optional[SemanticProfile]: ...
@@ -373,9 +384,9 @@ The only exception is `attach_resolver()`, which is synchronous-only configurati
 
 **Bulk operations.** `set_many()` and `delete_many()` (and their async variants `aset_many()`, `adelete_many()`) accept dictionaries and lists respectively, allowing operators to import or remove profiles for many entities in a single operation. These are essential for deployments with hundreds of entities.
 
-**Scope enumeration.** `domain_keys()`, `integration_keys()`, and `area_keys()` return the domain names, integration names, and area IDs that have a scope-level profile stored, as bare identifiers, mirroring `entity_keys()` for entity profiles. The reserved key scheme that separates the scopes internally is never exposed. Pair them with the matching `get_*_profile()` to walk every stored scope profile, for instance to surface the domain and area defaults an operator has configured.
+**Scope enumeration.** `domain_keys()`, `integration_keys()`, `area_keys()`, and `device_keys()` return the domain names, integration names, area IDs, and device IDs that have a scope-level profile stored, as bare identifiers, mirroring `entity_keys()` for entity profiles. The reserved key scheme that separates the scopes internally is never exposed. Pair them with the matching `get_*_profile()` to walk every stored scope profile, for instance to surface the domain and area defaults an operator has configured.
 
-**Orphan detection.** `find_orphans(known_entity_ids)` returns stored profile keys absent from the provided entity ID list, so hosts can detect profiles orphaned by entity renames (Specification Section 5.5). Hosts SHOULD run it at startup and on `entity_registry_updated` events and surface results to the operator.
+**Orphan detection.** `find_orphans(known_entity_ids)` returns stored profile keys absent from the provided entity ID list, so hosts can detect profiles orphaned by entity renames (Specification Section 5.5). Hosts SHOULD run it at startup and on `entity_registry_updated` events and surface results to the operator. The keyword arguments extend the check to scoped profiles: each supplied registry (`known_domains`, `known_integrations`, `known_areas`, `known_devices`) enables that scope, and scoped orphans are returned as their full reserved key (for example `__device__:abc123` for a device that was removed from HA), so callers can distinguish scopes. Omitted keywords leave that scope unchecked, and the plain one-argument call behaves exactly as before.
 
 ### 4.3 Storage Backends
 
@@ -485,7 +496,7 @@ store.set_deployment_defaults(DeploymentDefaults(
 ))
 ```
 
-This default applies **only to unprofiled entities**: it fills `control_mode` solely for an entity that has no profile at any level (entity, area, integration, or domain), matching Specification 5.8 and the control_mode precedence note in Section 4 (operators loosen an unprofiled entity via `deployment_defaults`, a profiled one via the Section 5.7 Rule A override). A profiled entity that simply omits `control_mode` defaults to `confirm`, never to the deployment default, so the default can never loosen a profiled entity below `confirm`. It does not participate in the Rule A most-restrictive comparison either, so a declared `autonomous` stays `autonomous`. Two practical notes for fail-closed operators:
+This default applies **only to unprofiled entities**: it fills `control_mode` solely for an entity that has no profile at any level (entity, device, area, integration, or domain), matching Specification 5.8 and the control_mode precedence note in Section 4 (operators loosen an unprofiled entity via `deployment_defaults`, a profiled one via the Section 5.7 Rule A override). A profiled entity that simply omits `control_mode` defaults to `confirm`, never to the deployment default, so the default can never loosen a profiled entity below `confirm`. It does not participate in the Rule A most-restrictive comparison either, so a declared `autonomous` stays `autonomous`. Two practical notes for fail-closed operators:
 
 - `prohibited` hard-blocks only when the call is evaluated in enforced mode; in advisory mode it passes with a warning. Pair a `prohibited` default with enforced evaluation. (`read_only` blocks regardless of enforcement mode, but it asserts entity nature rather than policy, so `prohibited` is the better fit for "not yet granted.")
 - `control_mode` gates control (writes/service calls) only; it never gates reads. mesa-core has no blanket read-deny default, and privacy denial is role-based (`access_roles.deny_for`), not a configurable default. Read/visibility fail-closed remains the host's responsibility.
@@ -522,16 +533,17 @@ explanation = resolver.explain("light.bedroom_ceiling")
 **Resolution algorithm:**
 
 1. Load entity-level profile if it exists.
-2. Load area-level profile for the entity's assigned area (requires the host's `get_entity_area` callback).
-3. Load integration-level profile for the integration that created this entity (requires the host's `get_entity_integration` callback; without it, only integrations whose name equals the entity's HA domain resolve, and hub/device integration profiles stay inert).
-4. Load domain-level profile for the entity's HA domain.
-5. Load deployment defaults.
-6. Merge from lowest to highest precedence: defaults -> domain -> integration -> area -> entity.
-7. Apply conflict resolution rules (Section 5.7) for fields present at multiple levels.
-8. Apply `triggers_automations` stickiness: if any level is `likely`, effective is `likely` unless entity-level overrides with `override_triggers_automations: true`.
-9. Apply `control_mode` tightening: most restrictive value wins.
-10. Apply privacy most-restrictive-wins.
-10. Return merged SemanticProfile.
+2. Load device-level profile for the physical device that owns this entity (requires the host's `get_entity_device` callback; without it, device-scope profiles stay inert).
+3. Load area-level profile for the entity's assigned area (requires the host's `get_entity_area` callback).
+4. Load integration-level profile for the integration that created this entity (requires the host's `get_entity_integration` callback; without it, only integrations whose name equals the entity's HA domain resolve, and hub/device integration profiles stay inert).
+5. Load domain-level profile for the entity's HA domain.
+6. Load deployment defaults.
+7. Merge from lowest to highest precedence: defaults, then domain, integration, area, device, entity.
+8. Apply conflict resolution rules (Section 5.7) for fields present at multiple levels.
+9. Apply `triggers_automations` stickiness: if any level is `likely`, effective is `likely` unless entity-level overrides with `override_triggers_automations: true`.
+10. Apply `control_mode` tightening: most restrictive value wins.
+11. Apply privacy most-restrictive-wins.
+12. Return merged SemanticProfile.
 
 **Host callback for area/domain lookup:**
 
@@ -562,7 +574,7 @@ merged = resolver.merge(higher_authority_profile, lower_authority_profile)
 - **Rule A:** `control_mode` tightening-only. `prohibited` > `confirm` > `autonomous` regardless of authority. Sole exception: an entity-level `user`-origin profile may loosen an inherited `confirm` to `autonomous` via `override_control_mode: true` with `control_reason`. `prohibited` and `read_only` never loosen.
 - **Rule B:** `triggers_automations: likely` sticky upward. `deployment_defined` at entity scope overrides.
 - **Rule C:** Privacy level most-restrictive-wins. `restricted` > `sensitive` > `normal` > `public`.
-- **Rule D:** Scope-then-origin for all other fields. Most specific scope wins (`entity` > `area` > `integration` > `domain`) among trusted origins (`developer`, `user`, `hybrid`); origin breaks scope ties. Hybrid trust is per field: a `hybrid` profile is trusted-tier only for the field paths in its `confirmed_fields`; its unconfirmed fields resolve in the lower tier as inferred (Rule 6). `inferred_ai` and `unknown`, and unconfirmed hybrid fields, never override trusted-tier declarations at any scope; among themselves the same scope-then-origin rule applies, with `inferred_ai` > `unknown`.
+- **Rule D:** Scope-then-origin for all other fields. Most specific scope wins (`entity` > `device` > `area` > `integration` > `domain`) among trusted origins (`developer`, `user`, `hybrid`); origin breaks scope ties. Hybrid trust is per field: a `hybrid` profile is trusted-tier only for the field paths in its `confirmed_fields`; its unconfirmed fields resolve in the lower tier as inferred (Rule 6). `inferred_ai` and `unknown`, and unconfirmed hybrid fields, never override trusted-tier declarations at any scope; among themselves the same scope-then-origin rule applies, with `inferred_ai` > `unknown`.
 - **Rule E:** Absence is not a conflict. Missing fields are inherited, not defaulted.
 
 ### 4.7 TemporalEvaluator
@@ -792,7 +804,7 @@ result = import_profiles(other_store, archive, on_conflict="skip")
 # result: imported, overwritten, skipped_existing, invalid (key -> error), ok
 ```
 
-The archive envelope (`mesa_export`) carries `format_version`, `exported_at`, `mesa_core_version`, and the profile documents grouped by scope: `entities`, `domains`, `integrations`, `areas`, plus `deployment_defaults`. The documents are the canonical profile JSON form, so the archive is storage-backend-agnostic by construction: any host that exposes its profiles through the ProfileStore API can exchange archives with any other, regardless of how either stores profiles internally.
+The archive envelope (`mesa_export`) carries `format_version`, `exported_at`, `mesa_core_version`, and the profile documents grouped by scope: `entities`, `domains`, `integrations`, `areas`, `devices`, plus `deployment_defaults`. The archive `format_version` is `1.1` as of mesa-core 1.3; import accepts both `1.0` and `1.1` archives, while older mesa-core versions reject a `1.1` archive outright rather than silently dropping the `devices` section. The documents are the canonical profile JSON form, so the archive is storage-backend-agnostic by construction: any host that exposes its profiles through the ProfileStore API can exchange archives with any other, regardless of how either stores profiles internally.
 
 **Design properties:**
 
@@ -833,7 +845,7 @@ Enforcement is not exposed as MCP tools: `MesaEnforcer` wraps the host's service
 
 **mesa_query_profiles**
 
-Input: domain filter, tag filter, area filter, intents, min_origin_authority, include_inferred flag, include_fields, limit, cursor.
+Input: domain filter, tag filter, area filter, device filter, integration filter, intents, min_origin_authority, include_inferred flag, include_fields, limit, cursor.
 Action: calls `store.query()` (passing the resolver), which applies filters against effective resolved profiles and returns paginated results; formats them into the response envelope.
 Output: results array, total_matched, pagination metadata, caller_context if available.
 
@@ -923,8 +935,8 @@ store = ProfileStore(backend=SqliteBackend("/config/mesa/mesa.db"))
 # query HA for area and domain information. They are called synchronously, from
 # inside a worker thread on the async paths, so they must not be coroutines: a
 # coroutine object is not None, so an `async def` callback here would be used as
-# the lookup result itself and silently skip the area, integration, and domain
-# inheritance levels rather than raising. Cache the registry, or bridge with
+# the lookup result itself and silently skip the device, area, integration, and
+# domain inheritance levels rather than raising. Cache the registry, or bridge with
 # asyncio.run_coroutine_threadsafe against your server's loop.
 def get_entity_area(entity_id: str) -> Optional[str]:
     # Look the entity up in your cached copy of the HA area registry
@@ -1011,7 +1023,8 @@ mesa-core never talks to Home Assistant. Every piece of HA registry or state kno
 | Callback | Consumed by | Without it |
 |---|---|---|
 | `get_entity_area` | `ProfileStore` / `InheritanceResolver` | Area-level inheritance is skipped; `query(areas=...)` raises `ValueError`. |
-| `get_entity_integration` | `InheritanceResolver` | Integration sidecar profiles resolve only where the integration name equals the entity's HA domain; hub and device integration profiles stay inert (Specification 5.6). |
+| `get_entity_integration` | `InheritanceResolver` | Integration sidecar profiles resolve only where the integration name equals the entity's HA domain; hub and device integration profiles stay inert (Specification 5.6). `query(integrations=...)` raises `ValueError`. |
+| `get_entity_device` | `ProfileStore` / `InheritanceResolver` | Device-level inheritance is skipped entirely; device-scope profiles are inert (Specification 5.6); `query(devices=...)` raises `ValueError`. |
 | `get_state` | `MesaEnforcer`, `LeaseManager` (accepted by `TemporalEvaluator` for future entity-state condition types; unused there in 1.x) | Declared-limit predicates are treated as active (fail-closed), so limits may block unexpectedly; protected automations deny leases unconditionally. |
 | `get_calendar_events` | `TemporalEvaluator` | `calendar_entity` conditions are unevaluable and treated as active (fail-closed). Note `duration` and `relative_to_event` conditions validate but are unevaluable in 1.x regardless, and also fail closed. |
 | `get_solar_elevation` | `TemporalEvaluator` (via `MesaEnforcer`) | `solar_angle` conditions are unevaluable and treated as active (fail-closed). |
@@ -1088,11 +1101,11 @@ mesa-core 1.x implements the MESA Specification at Levels 1 and 2 in full and at
 
 **TriggerValidator.** Live cross-reference of declared `triggers_automations: none` profiles against actual HA automation configurations. Uses host-provided callback for automation data. Returns `ValidationIssue` list. Runs at startup and on automation reload.
 
-**Profile migration.** `migrate_profile(profile, target_version)` utility and migration framework. With 1.0 as the only published schema version, it stamps a missing `schema_version` and returns a copy otherwise unchanged; no cross-version conversions exist yet. Field renames, enum value changes, and structural reorganisations land here when a schema revision first requires them.
+**Profile migration.** `migrate_profile(profile, target_version)` utility and migration framework. Documents without a `schema_version` are treated as 1.0-era and stamped through the migration path. The 1.0-to-1.1 step (mesa-core 1.3) restamps the version; the 1.1 format is purely additive, so no field conversions apply. Field renames, enum value changes, and structural reorganisations land here when a schema revision first requires them.
 
 **Integration profile import.** `import_from_integration(integration_path)` loads a developer profile from an integration directory's `mesa_profile.json`. Returns a `SemanticProfile` with `inheritance_scope: integration`. Profiles that omit `metadata_origin` are stamped `source: developer`, per Specification Section 5.3; profiles loaded from any other source default to `source: unknown`. Host servers call this at startup for each installed integration to populate the `ProfileStore`. Requires filesystem access to the integration directories; hosts running on a separate machine from HA cannot use this import path and rely on operator-authored profiles instead.
 
-**InheritanceResolver.** Four-level inheritance (domain, integration, area, entity). Deployment defaults as floor. Conflict resolution Rules A through E. `triggers_automations` stickiness and override. `control_mode` tightening.
+**InheritanceResolver.** Four-level inheritance (domain, integration, area, entity; the device level arrived in 1.3). Deployment defaults as floor. Conflict resolution Rules A through E. `triggers_automations` stickiness and override. `control_mode` tightening.
 
 **MesaEnforcer.** `control_mode` evaluation (advisory and enforced modes). Confirmation challenge/token round-trip for `confirm` entities in enforced mode (Specification Section 6.6): challenge issuance, token validation, parameter binding, single-use and expiry handling. Declared limits evaluation. Privacy enforcement. Caller context role resolution. Inferred profile confidence checking (Rules 3 and 8).
 
@@ -1123,6 +1136,22 @@ mesa-core 1.x implements the MESA Specification at Levels 1 and 2 in full and at
 **Solar-angle temporal conditions.** The `solar_angle` condition type evaluates through the `get_solar_elevation` host callback: each `solar_event` is an elevation-boundary crossing, and `solar_offset_minutes` shifts the transition by sampling the elevation in the past. No astronomy dependency; without the callback the condition stays fail-closed as in 1.1. See Section 4.7.
 
 **Semantic moments (HA 2026.7+ purpose-specific triggers).** `mesa_get_profile` accepts `include_semantic_moments` and, when the host supplies the `get_semantic_moments` callback, returns the purpose-specific triggers and conditions the entity participates in. Consumed live from HA at request time, never stored in profiles (so it cannot go stale), never consulted by enforcement, and documented as carrying no MESA authority.
+
+### Added in Version 1.3
+
+**Device inheritance scope (MESA 1.1).** The fifth inheritance level, keyed by HA device registry ID and ranked between entity and area: `get/set/delete_device_profile`, `device_keys()`, the `get_entity_device` host callback on `ProfileStore` and `InheritanceResolver`, the `__device__:` reserved namespace, a `devices` archive section, and `device` in the `inheritance_scope` enum and explanation `provided_by_level`. Profile format `schema_version` is now `1.1`; the 1.0-to-1.1 migration step restamps documents on request. The Rule A and Rule B loosening overrides remain entity-only.
+
+**Query filters.** `query(devices=...)` and `query(integrations=...)` (and the matching `mesa_query_profiles` parameters), each requiring its host mapping callback and raising `ValueError` without it, mirroring `areas`.
+
+**Capability hint resolution.** `capability_semantics.control_mode` on an integration-scoped profile participates in Rule A as that profile's contribution when `operational_boundaries.control_mode` is absent, attributed below every operational_boundaries declaration (Specification Section 4). The enum is now validated in both the validator and the canonical JSON Schema.
+
+**Profile validity evaluation.** `SemanticProfile.validity_warnings(now=..., known_entity_ids=..., integration_version=..., ha_version=...)` evaluates the `profile_valid_for` invalidation triggers (Specification 5.5) and returns advisory warnings. Each check runs only when the host supplies the corresponding input.
+
+**Scoped orphan detection.** `find_orphans` keyword arguments extend orphan detection to domain, integration, area, and device profiles.
+
+**Fail-closed lease profile parsing.** Malformed Enrichment Section 11 fields on automation profiles (`cooperative_priority.level`, `trigger_entities`, `condition_entities`, `affected_entities`) now deny leases with a surfaced warning instead of silently losing protection. Lease timestamps are timezone-aware UTC.
+
+**MCP corrections.** `mesa_version` reports `1.1`; `component_type` is derived from the entity ID's domain (previously always `entity`); the raw SDK adapter returns an `unknown_tool` error envelope instead of raising for unregistered tool names.
 
 ### Deferred to Version 2
 

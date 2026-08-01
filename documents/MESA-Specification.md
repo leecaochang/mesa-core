@@ -1,5 +1,5 @@
 # MESA Specification
-**Version:** 1.0.1
+**Version:** 1.1.0
 **Document Type:** Formal Schema Reference
 
 ---
@@ -133,7 +133,7 @@ Full MESA implementation including semantic retrieval API, enforcement, and opti
 **Requirements:** All Level 1 and Level 2 requirements, plus:
 - MUST implement the following MCP tools defined in Section 9.5: `mesa_query_profiles`, `mesa_get_profile`, `mesa_get_caller_context`, `mesa_explain_profile`.
 - SHOULD implement lease tools (`mesa_request_lease`, `mesa_release_lease`) when the deployment requires multi-agent coordination. The protocol is defined in Section 21 (MESA Enrichment) and implemented by mesa-core 1.1+; multi-agent priority preemption (Section 21.6) is the one part not yet implemented by the reference implementation. A Level 3 server that omits lease tools is conformant but cannot participate in the coordination protocol.
-- MUST support domain, tag, area, intent, and origin filtering.
+- MUST support domain, tag, area, device, integration, intent, and origin filtering.
 - MUST support pagination.
 - MUST require authentication equivalent to the host platform's API authentication.
 - SHOULD capture pre-execution snapshots for `snapshot_restorable` automations before they fire. Full snapshot support is expected in a future revision.
@@ -148,7 +148,7 @@ Full MESA implementation including semantic retrieval API, enforcement, and opti
 
 **Inferred profile poisoning.** A malicious actor could craft inputs to an AI inference system that cause it to generate dangerous profiles (e.g., marking a lock as `control_mode: autonomous`). Mitigation: inferred profiles affecting security-sensitive domains (`lock`, `alarm_control_panel`, `camera`, `binary_sensor` with security tags) MUST default to `control_mode: confirm` regardless of inference output. Human review MUST be required before such profiles become operational.
 
-**Tightening abuse and the removal path.** Because tightening always wins (Rule A) and privacy is most-restrictive-wins (Rule C), a poisoned or erroneous profile can also deny service by over-restricting: marking entities `prohibited` or `restricted` that should not be. Conflict resolution applies only to extant profiles; the remedy is removal. Operators locate the offending profile with `mesa_explain_profile`, which names the level and origin contributing each effective value, and delete or correct it through the host server's configuration interface. Host servers MUST allow operators to delete any profile of any origin, at any scope: entity, area, or domain.
+**Tightening abuse and the removal path.** Because tightening always wins (Rule A) and privacy is most-restrictive-wins (Rule C), a poisoned or erroneous profile can also deny service by over-restricting: marking entities `prohibited` or `restricted` that should not be. Conflict resolution applies only to extant profiles; the remedy is removal. Operators locate the offending profile with `mesa_explain_profile`, which names the level and origin contributing each effective value, and delete or correct it through the host server's configuration interface. Host servers MUST allow operators to delete any profile of any origin, at any scope: entity, device, area, integration, or domain.
 
 **Declared limit bypass.** Operational boundaries in `advisory` enforcement mode are semantic descriptions that a well-behaved agent should follow. They do not replace HA's native access control. Use `enforced` mode for safety-critical limits.
 
@@ -218,9 +218,13 @@ When absent, agents MUST default to `confirm`. There is no silent autonomous def
 **`control_mode` field precedence across profile layers.** When `control_mode` is declared in multiple locations, the following precedence order applies from lowest to highest:
 
 1. `capability_semantics.control_mode` in the integration profile (capability-level hint, lowest authority)
-2. `operational_boundaries.control_mode` in the integration's distributed profile (integration-level default, the `mesa_profile.json` sidecar)
-3. `operational_boundaries.control_mode` in area-level profile
-4. `operational_boundaries.control_mode` in entity-level profile (highest authority)
+2. `operational_boundaries.control_mode` in domain-level profile
+3. `operational_boundaries.control_mode` in the integration's distributed profile (integration-level default, the `mesa_profile.json` sidecar)
+4. `operational_boundaries.control_mode` in area-level profile
+5. `operational_boundaries.control_mode` in device-level profile
+6. `operational_boundaries.control_mode` in entity-level profile (highest authority)
+
+The capability-level hint participates in resolution only from integration-scoped profiles. An integration-scoped profile that declares `capability_semantics.control_mode` but no `operational_boundaries.control_mode` contributes the hint to Rule A as that profile's declaration, attributed below every operational_boundaries declaration; when both are present, the `operational_boundaries` value is the profile's contribution and the hint is inert. A `capability_semantics` object on a profile of any other scope never participates in resolution.
 
 Within each level, tightening-only rules apply: a higher-level declaration may only change `control_mode` to a more restrictive value, following the tightening hierarchy and `read_only` handling defined in the precedence rule above. At no level may a less restrictive value override a more restrictive one declared at any level, with a single exception: the operator loosening override (Section 5.7 Rule A) allows an entity-level `user`-origin profile to loosen an inherited `confirm` to `autonomous`.
 
@@ -267,12 +271,12 @@ MESA is additive. Systems that do not expose `semantic_profile` remain fully con
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `schema_version` | `string` | SHOULD | MESA schema version. Currently `1.0`. |
+| `schema_version` | `string` | SHOULD | MESA schema version. Currently `1.1`. |
 | `profile_version` | `string` | SHOULD | Version of this specific profile. Implementor-defined. |
 | `metadata_origin` | `object` | RECOMMENDED | Profile provenance. See Section 5.3. When absent, the default depends on the profile's location: profiles loaded from an integration's `mesa_profile.json` default to `source: developer`; profiles from any other location default to `source: unknown`. See Section 5.3. |
 | `semantic_tags` | `array<string>` | RECOMMENDED | Namespaced tags classifying this component. See Appendix A. |
 | `last_updated` | `string` | SHOULD | ISO 8601 timestamp of most recent modification. |
-| `inheritance_scope` | `enum` | RECOMMENDED | How this profile applies in the inheritance hierarchy. `entity` (applies to this entity only, default), `domain` (applies to all entities of one HA entity domain, e.g. all `lock.*`), `integration` (applies to all entities created by one integration; the `mesa_profile.json` sidecar default), `area` (applies to all entities assigned to this area). See Section 5.6. |
+| `inheritance_scope` | `enum` | RECOMMENDED | How this profile applies in the inheritance hierarchy. `entity` (applies to this entity only, default), `domain` (applies to all entities of one HA entity domain, e.g. all `lock.*`), `integration` (applies to all entities created by one integration; the `mesa_profile.json` sidecar default), `area` (applies to all entities assigned to this area), `device` (applies to all entities belonging to one HA device registry entry). See Section 5.6. |
 | `profile_valid_for` | `object` | MAY | Conditions under which this profile should be reviewed. See Section 5.5. |
 
 ### 5.3 Metadata Origin Schema
@@ -364,37 +368,44 @@ When an invalidation trigger fires, a host MCP server SHOULD surface a warning. 
 
 **Live validation of `triggers_automations`.** Automation configurations change frequently. A static `triggers_automations: none` declaration can become stale the moment an operator adds a new automation referencing that entity. Level 2 and Level 3 host implementations SHOULD periodically run a live cross-reference of declared `none` profiles against the actual HA automation registry. Any entity declared `none` that is found in an automation trigger or condition block SHOULD generate a staleness warning surfaced to the operator. Automations can reference entities indirectly, through device triggers and conditions (`device_id`) and the target selectors of purpose-specific triggers (`area_id`, `floor_id`, `label_id`, `device_id`); when cross-referencing, hosts SHOULD expand such selectors to their member entities using the HA registries, because raw configuration scanning sees only explicit `entity_id` references. The mesa-core module provides `TriggerValidator` for this purpose.
 
-**Entity renames.** Profiles are keyed by entity ID, and operators rename entities freely. A profile whose entity ID no longer exists in the HA registry is orphaned: it applies to nothing, and the renamed entity silently loses its profile, falling back to domain and area inheritance and deployment defaults. Host servers SHOULD detect orphaned profiles by checking stored keys against the entity registry, at startup and on `entity_registry_updated` events, surface them to the operator, and offer re-keying. Host servers MAY additionally record HA registry unique IDs alongside entity IDs to survive renames automatically.
+**Entity renames.** Profiles are keyed by entity ID, and operators rename entities freely. A profile whose entity ID no longer exists in the HA registry is orphaned: it applies to nothing, and the renamed entity silently loses its profile, falling back to device, area, integration, and domain inheritance and deployment defaults. Scoped profiles are unaffected by entity renames: a device-scope profile is keyed by the HA device registry ID, which survives renames of the entities the device owns. Host servers SHOULD detect orphaned profiles by checking stored keys against the entity registry, at startup and on `entity_registry_updated` events, surface them to the operator, and offer re-keying. Host servers MAY additionally record HA registry unique IDs alongside entity IDs to survive renames automatically.
 
 ### 5.6 Profile Inheritance
 
-MESA profiles follow a four-level inheritance hierarchy. This reduces per-entity authoring burden significantly: an operator or developer can declare defaults that apply to many entities at once, and override only where needed.
+MESA profiles follow a five-level inheritance hierarchy. This reduces per-entity authoring burden significantly: an operator or developer can declare defaults that apply to many entities at once, and override only where needed.
 
 **Hierarchy (lowest to highest precedence):**
 
 1. **Domain-level defaults** - apply to all entities of one HA entity domain (for example all `lock.*` entities), regardless of which integration created them. These are operator-authored cross-integration defaults; the `deployment_defaults` floor and the built-in safety baseline of Section 5.8 also act at this level. Resolved by an entity's HA domain.
 2. **Integration-level defaults** - declared in an integration's distributed profile (`mesa_profile.json` sidecar, Section 8). Apply to all entities that integration created, across whatever HA domains those entities fall under (a hub integration's `lock.*`, `sensor.*`, and `binary_sensor.*` entities alike). More specific than a domain default, because an integration author knows their own devices more precisely than a generic per-domain rule can. Resolved by mapping each entity to the integration that created it (see below).
 3. **Area-level defaults** - declared in an area's spatial profile `operational_boundaries`. Apply to all entities assigned to that area unless overridden.
-4. **Entity-level profile** - declared directly on an entity. Takes full precedence over domain, integration, and area defaults for all fields present, subject to the trust-tier rule (Rule D, Section 5.7) and the field-specific Rules A through C.
+4. **Device-level defaults** - declared against one HA device registry entry. Apply to all entities that physical device owns (a multi-sensor's presence, light-level, and battery entities alike). More specific than an area, because a device is one object within a room, and broader than an entity, because one device commonly exposes many entities. Device-level profiles are the natural home for operator intent that is a property of the hardware: the privacy character of a capture device, the trustworthiness of a particular sensor, or a hands-off rule for one physical appliance. A device profile also covers entities the device exposes in the future (integrations routinely add entities to an existing device on update), which per-entity profiles cannot.
+5. **Entity-level profile** - declared directly on an entity. Takes full precedence over domain, integration, area, and device defaults for all fields present, subject to the trust-tier rule (Rule D, Section 5.7) and the field-specific Rules A through C.
 
 **Resolving the integration level.** Mapping an entity to the integration that created it is host knowledge; it cannot be derived from the entity ID, which carries only the HA domain. A conforming host SHOULD provide this mapping (in Home Assistant, an entity's config entry identifies its integration). A host that cannot provide it falls back to applying an integration-scoped profile only to entities whose HA domain equals the integration's directory name. That fallback covers domain-defining integrations (`light`, `lock`, `cover`, and similar core components whose directory name is an entity domain) and leaves device and hub integration profiles unresolved. This is the conservative status quo, not a new risk: an unresolved profile grants nothing.
+
+**Resolving the device level.** Mapping an entity to the physical device that owns it is likewise host knowledge (in Home Assistant, the entity registry records each entity's `device_id`). A conforming host SHOULD provide this mapping. There is no fallback: a host that cannot provide it leaves device-scoped profiles inert, which is safe for the same reason as above, an unresolved profile grants nothing. Entities that belong to no device (template entities, helpers) simply have no device layer.
+
+**The three senses of "device".** MESA now uses the word in three unrelated mechanisms, and implementors should keep them distinct. The `device` inheritance scope (this section) is profile scoping keyed by an HA device registry ID. The `side_effect_scope` value `device_localized` (Section 6.2) is a hardware-coupling claim: acting on one entity may affect other entities on the same physical device. Automation `device_id` target selectors (Section 5.5) are indirect entity references inside automation configurations, expanded to member entities for cross-referencing. None of these implies or requires the others.
 
 **Inheritance rules:**
 
 - Fields present in a lower-level profile are used when the same field is absent from all higher-level profiles.
 - Fields present in a higher-level profile take precedence among profiles of `developer`, `user`, or `hybrid` origin. `inferred_ai` and `unknown` profiles never override trusted-tier declarations regardless of level (Rule D, Section 5.7).
-- `control_mode` follows the additional tightening rule: a higher-level profile may tighten freely but may loosen an inherited `confirm` only via the operator loosening override (Rule A, Section 5.7). `prohibited` and `read_only` MUST NOT be loosened at any level.
+- `control_mode` follows the additional tightening rule: a higher-level profile may tighten freely but may loosen an inherited `confirm` only via the operator loosening override (Rule A, Section 5.7). `prohibited` and `read_only` MUST NOT be loosened at any level. The loosening override, and the `override_triggers_automations` exception of Rule B, remain valid at entity scope only: a device-level profile may tighten for every entity the device owns, but never loosen.
 - `triggers_automations: likely` is sticky upward: if any profile at any level declares `likely`, the effective value is `likely` regardless of lower-level declarations. `none` is not sticky: a lower-level `likely` overrides a higher-level `none` because the presence of any known automation trigger is more informative than an assertion of absence. `deployment_defined` at entity scope may override `likely` from higher levels when accompanied by `override_triggers_automations: true`, representing the operator's precise knowledge of their specific deployment. To override a sticky `likely` from a higher level, an entity-level profile may declare `triggers_automations: none` alongside `override_triggers_automations: true` with a `human_reason` string explaining the exception.
 - `privacy_classification.level` follows the more-restrictive-wins rule from Section 7.
 
 **Practical example:** An integration declares `control_mode: autonomous` in its distributed profile for all its light entities. An operator assigns all bedroom lights to the bedroom area. The bedroom area profile declares `control_mode: confirm`. All bedroom lights now require confirmation, even though the integration declared them autonomous. The operator has tightened the restriction at the area level. No per-entity profiles are needed.
+
+**Device-level example:** A nursery camera device exposes `camera.nursery`, `binary_sensor.nursery_motion`, and `sensor.nursery_sound_level`. The operator declares one device-scope profile with `privacy_classification.level: restricted` and `contains_visual_capture: true`. Every entity the camera owns, including entities a future firmware update adds, resolves that classification, while the nursery's thermostat (same area, different device) is unaffected.
 
 **JSON example [ILLUSTRATIVE]:**
 
 ```json
 {
   "semantic_profile": {
-    "schema_version": "1.0",
+    "schema_version": "1.1",
     "metadata_origin": {"source": "developer", "confidence": 1.0},
     "inheritance_scope": "integration",
     "semantic_tags": ["lighting.ambient"],
@@ -409,7 +420,7 @@ MESA profiles follow a four-level inheritance hierarchy. This reduces per-entity
 }
 ```
 
-The `inheritance_scope` field tells host implementations how to apply this profile. Valid values: `entity` (applies to this entity only, default), `domain` (applies to all entities of one HA entity domain), `integration` (applies to all entities created by one integration), `area` (applies to all entities assigned to this area).
+The `inheritance_scope` field tells host implementations how to apply this profile. Valid values: `entity` (applies to this entity only, default), `domain` (applies to all entities of one HA entity domain), `integration` (applies to all entities created by one integration), `area` (applies to all entities assigned to this area), `device` (applies to all entities belonging to one HA device registry entry).
 
 ### 5.7 Global Profile Conflict Resolution
 
@@ -427,7 +438,7 @@ If any profile at any level declares `triggers_automations: likely` for an entit
 When multiple profiles declare `privacy_classification.level` for the same entity, the most restrictive level applies. `restricted` beats `sensitive` beats `normal` beats `public` regardless of origin authority.
 
 **Rule D: Scope precedence with origin tiebreak for all other fields.**
-For all fields not covered by Rules A, B, or C, resolution proceeds in two tiers. Within the trusted tier (`developer`, `user`, `hybrid`), the most specific scope wins: `entity` > `area` > `integration` > `domain`. Where scope is equal, origin authority decides: `developer` > `user` > `hybrid`. A `hybrid` profile is trusted **per field**, not wholesale: a field is trusted-tier only when that specific field path appears in the profile's `confirmed_fields`. An unconfirmed field of a `hybrid` profile remains inferred (Rule 6, Section 5.4) and is resolved in the lower tier, exactly as an `inferred_ai` field would be. Profiles of `inferred_ai` or `unknown` origin form a lower tier: they never override a field explicitly declared by any trusted-tier profile at any scope, consistent with Rule 7 (Section 5.4). When a field is declared only in the lower tier, the same scope-then-origin rule applies within it (`inferred_ai` > `unknown`). This preserves operator sovereignty (an operator's entity-level declaration beats a developer's domain-level default) while ensuring inferred and unattributed profiles can fill gaps but never displace explicit human or developer declarations.
+For all fields not covered by Rules A, B, or C, resolution proceeds in two tiers. Within the trusted tier (`developer`, `user`, `hybrid`), the most specific scope wins: `entity` > `device` > `area` > `integration` > `domain`. Where scope is equal, origin authority decides: `developer` > `user` > `hybrid`. A `hybrid` profile is trusted **per field**, not wholesale: a field is trusted-tier only when that specific field path appears in the profile's `confirmed_fields`. An unconfirmed field of a `hybrid` profile remains inferred (Rule 6, Section 5.4) and is resolved in the lower tier, exactly as an `inferred_ai` field would be. Profiles of `inferred_ai` or `unknown` origin form a lower tier: they never override a field explicitly declared by any trusted-tier profile at any scope, consistent with Rule 7 (Section 5.4). When a field is declared only in the lower tier, the same scope-then-origin rule applies within it (`inferred_ai` > `unknown`). This preserves operator sovereignty (an operator's entity-level declaration beats a developer's domain-level default) while ensuring inferred and unattributed profiles can fill gaps but never displace explicit human or developer declarations.
 
 **Field paths.** Everywhere this specification names a field path (`confirmed_fields`, the explanation `field_path`, and the per-field trust of this rule), the grammar is dot-notation: a path is a sequence of property names joined by `.`, and each `.` is a segment separator. A path therefore covers the whole value declared at it: confirming `x_vendor.a` confirms everything beneath `x_vendor.a`, including an object value and all of its descendants. A property name that itself contains a `.` (or a `\`) is not path-addressable: a `confirmed_fields` entry always parses as nested segments and can never name such a property, so it receives no field-level trust of its own (it is still covered by a confirmed ancestor, and profiles of `developer` or `user` origin are unaffected, since their trust does not derive from paths). Implementations MUST NOT let a confirmation intended for a nested path also match a literal property name that renders identically; when reporting such a property in an explanation, implementations SHOULD render the `.` escaped (`a\.b`) so the reported path stays unambiguous.
 
@@ -860,7 +871,7 @@ A conforming agent with caller context MUST apply `access_roles` before acting o
 
 Integration profiles are authored by developers and distributed with the integration as a sidecar file named `mesa_profile.json`, placed in the integration directory. The file contains the `semantic_profile` and `privacy_classification` root objects, and optionally a `diagnostic_profile`. Because it travels inside the integration directory, it ships through normal distribution channels (HACS, manual install) without modifying any file that HA tooling validates.
 
-**Data flow:** the host MCP server is responsible for extracting integration profiles at startup and writing them to the `ProfileStore` with `inheritance_scope: integration`. mesa-core provides `import_from_integration(integration_path)` to automate this: it reads the integration's `mesa_profile.json`. Profiles in `mesa_profile.json` that omit `metadata_origin` default to `source: developer` (Section 5.3). An integration profile applies to every entity that integration created, regardless of HA domain, so the host MUST supply mesa-core with an entity-to-integration mapping for it to resolve (Section 5.6); in Home Assistant this is the entity's config entry. A host that cannot supply the mapping falls back to the domain-defining behaviour of Section 5.6, under which only integrations whose directory name is an HA entity domain take effect. (Earlier revisions stored sidecars with `inheritance_scope: domain`, which by the resolution rules of Section 5.6 only ever matched domain-defining integrations; `integration` scope generalises this to the device and hub integrations that make up most installs.)
+**Data flow:** the host MCP server is responsible for extracting integration profiles at startup and writing them to the `ProfileStore` with `inheritance_scope: integration`. mesa-core provides `import_from_integration(integration_path)` to automate this: it reads the integration's `mesa_profile.json`. Profiles in `mesa_profile.json` that omit `metadata_origin` default to `source: developer` (Section 5.3). An integration profile applies to every entity that integration created, regardless of HA domain, so the host MUST supply mesa-core with an entity-to-integration mapping for it to resolve (Section 5.6); in Home Assistant this is the entity's config entry. A host that cannot supply the mapping falls back to the domain-defining behaviour of Section 5.6, under which only integrations whose directory name is an HA entity domain take effect. (Earlier revisions stored sidecars with `inheritance_scope: domain`, which by the resolution rules of Section 5.6 only ever matched domain-defining integrations; `integration` scope generalises this to the device and hub integrations that make up most installs.) Device-scope profiles are the operator-side counterpart: sidecars remain integration-scoped, and a profile for one physical device is authored by the operator through the host server (Section 5.6), not distributed with the integration.
 
 **Why not `manifest.json`?** Earlier drafts of this specification distributed integration profiles as a top-level key in `manifest.json`. That path is rejected for two reasons: hassfest (the manifest validator run in most custom integration CI pipelines) rejects unknown keys with `extra keys not allowed`, and embedding foreign keys in a file validated by HA tooling couples MESA's schema evolution to HA's. MESA does not use `manifest.json`.
 
@@ -900,7 +911,7 @@ Agents MUST prioritise integrations with MESA profiles over unprofiled alternati
 ```json
 {
   "semantic_profile": {
-    "schema_version": "1.0",
+    "schema_version": "1.1",
     "profile_version": "1.0",
     "metadata_origin": {"source": "developer", "confidence": 1.0},
     "semantic_tags": ["media.multiroom", "media.lossless"],
@@ -954,7 +965,7 @@ A conforming Level 3 implementation exposes four core MCP tools (MUST) and two l
 
 | Tool | Purpose |
 |---|---|
-| `mesa_query_profiles` | Query profiles by domain, tag, area, intent, or origin with pagination. |
+| `mesa_query_profiles` | Query profiles by domain, tag, area, device, integration, intent, or origin with pagination. |
 | `mesa_get_profile` | Retrieve a single complete profile by entity ID. |
 | `mesa_request_lease` | Request a temporary coordination lease on entities. |
 | `mesa_release_lease` | Release a held lease early. |
@@ -973,6 +984,8 @@ All filter fields are optional and combinable. An empty query returns all availa
 | `tags` | `array<string>` | - | Filter by semantic tags. |
 | `tags_match` | `enum` | `any` | `any` or `all`. |
 | `areas` | `array<string>` | - | Filter by area identifier. |
+| `devices` | `array<string>` | - | Filter by HA device registry ID. Requires the host's entity-to-device mapping (Section 5.6); servers without it MUST return `invalid_query`. |
+| `integrations` | `array<string>` | - | Filter by the integration that created the entity. Requires the host's entity-to-integration mapping (Section 5.6); servers without it MUST return `invalid_query`. |
 | `intents` | `array<string>` | - | Filter by intent dot-notation. |
 | `min_origin_authority` | `enum` | - | `inferred_ai`, `hybrid`, `user`, or `developer`. |
 | `include_inferred` | `boolean` | `false` | Include `inferred_ai` profiles. Opt-in required. |
@@ -1017,7 +1030,7 @@ All filter fields are optional and combinable. An empty query returns all availa
 | Field | Always present | Description |
 |---|---|---|
 | `entity_id` | Yes | HA entity ID or component identifier. |
-| `component_type` | Yes | `entity`, `integration`, `automation`, `scene`, `area`, `helper`, `zone`, `person`. |
+| `component_type` | Yes | `entity`, `automation`, `scene`, `helper`, `zone`, `person`. Results are always entity-keyed: scoped profiles (domain, integration, area, device) surface through inheritance resolution and `mesa_explain_profile`, never as query rows, so no scoped component type is emitted. The value is derived from the entity ID's domain. |
 | `staleness_status` | Yes for `inferred_ai` | `current`, `stale`, or `unknown`. |
 | `semantic_profile` | Yes | Profile object, filtered by `include_fields`. |
 | `diagnostic_profile` | No | Included when available and `diagnostic_profile` in `include_fields`. |
@@ -1082,7 +1095,7 @@ When `include_semantic_moments` is true and the host exposes the mapping, the re
 |---|---|---|---|
 | `field_path` | `string` | Yes | Dot-notation path to the resolved field (e.g. `operational_boundaries.control_mode`, `privacy_classification.level`). |
 | `effective_value` | `any` | Yes | The resolved value after inheritance and conflict resolution. |
-| `provided_by_level` | `enum` | Yes | The profile level that contributed this value: `entity`, `area`, `integration`, `domain`, `deployment_default`, or `built_in_baseline`. |
+| `provided_by_level` | `enum` | Yes | The profile level that contributed this value: `entity`, `device`, `area`, `integration`, `domain`, `deployment_default`, or `built_in_baseline`. |
 | `provided_by_origin` | `enum` | Yes | The origin authority of the contributing profile: `developer`, `user`, `hybrid`, `inferred_ai`, or `unknown`. |
 | `conflict` | `boolean` | Yes | Whether multiple levels declared differing values for this field. Identical declarations at several levels agree and are not a conflict. |
 | `conflict_resolution` | `string` | No | Present when `conflict` is true. Human-readable description of which rule resolved the conflict (e.g. "Rule A: tightening applied - area declared confirm over domain autonomous"). |
@@ -1103,8 +1116,11 @@ When `include_semantic_moments` is true and the host exposes the mapping, the re
 | `invalid_query` | Query contains invalid fields or operator tokens. |
 | `lease_conflict` | Lease denied due to `protected` or `critical` automation. |
 | `lease_not_found` | Lease ID does not exist or has expired. |
+| `unknown_tool` | The requested tool name is not registered. `details.tool` names it. |
 | `rate_limited` | Too many requests. `details.retry_after_seconds` provided. |
 | `server_error` | Internal server error. |
+
+`unauthorized` and `rate_limited` are emitted only by host servers: authentication and rate limiting are host responsibilities (Section 9.1), and mesa-core itself never produces either code.
 
 ---
 
@@ -1143,9 +1159,11 @@ No formal governance body exists at the time of this writing. This section docum
 
 **Deprecation.** Deprecated canonical tags remain parseable for a minimum of two major schema versions.
 
-**Schema versioning.** Patch versions (1.0.x) fix errors. Minor versions (1.x.0) add optional fields. Major versions (x.0.0) may introduce breaking changes with a documented migration path.
+**Schema versioning.** Patch versions (1.0.x) fix errors. Minor versions (1.x.0) add optional fields or new values to existing enums. Major versions (x.0.0) may introduce breaking changes with a documented migration path.
 
 **Forward and backward compatibility.** When mesa-core encounters a profile with a `schema_version` higher than its own, it MUST parse all fields it recognises and silently ignore unknown fields. When it encounters a profile with a lower `schema_version`, it MUST parse it as-is without attempting migration. The mesa-core `migrate_profile()` utility (see mesa-core Module Proposal) handles explicit version migration when the operator requests it. Profiles are never silently migrated or rewritten.
+
+**Unknown enum values.** The ignore-unknown rule above applies to fields, not to values. An unknown value in a safety-relevant enum (`control_mode`, `privacy_classification.level`, `inheritance_scope`) MUST fail validation loudly: the document is rejected, never silently coerced to a known value, and never degraded to a lower-impact reading. Rejection is the safe reading because an unresolved profile grants nothing, while a coerced one could grant the wrong thing. A practical consequence: a reader at schema version 1.0 rejects a document declaring `inheritance_scope: device` (introduced in 1.1). Deployments that share one profile store across implementations at different versions MUST upgrade readers before writers begin using new enum values.
 
 **Reference implementation.** mesa-core is the reference implementation of the MESA Specification. When the specification and mesa-core behaviour diverge, the specification takes precedence. Discrepancies should be reported as issues in the mesa-core repository. mesa-core ships a canonical JSON Schema file (`mesa_profile.schema.json`) that is the machine-readable equivalent of the schema tables in this document. Third-party implementations MAY use this schema file for validation rather than reimplementing from prose.
 
@@ -1164,7 +1182,7 @@ Tags that receive no reference implementations within 90 days of proposal are cl
 
 ## 24. Related Work
 
-**W3C WoT Thing Description.** WoT TD is device-centric; MESA is deployment-centric. WoT TD describes a single device in isolation. MESA describes a device's operational meaning within a specific deployment, including its relationships to spaces, automations, and user expectations. MESA addresses spatial topology, automation conflict semantics, and AI agent operational boundaries that WoT TD does not.
+**W3C WoT Thing Description.** WoT TD describes a single device in isolation, as a self-contained capability document; MESA is deployment-centric and describes what components mean within a specific deployment, including their relationships to spaces, automations, and user expectations. MESA's `device` inheritance scope does not change this distinction: a device-scope profile is deployment policy an operator attaches to a device registry entry, not a self-description the device carries. MESA addresses spatial topology, automation conflict semantics, and AI agent operational boundaries that WoT TD does not.
 
 **Matter Device Type Model.** Matter defines what a device is at the protocol level. MESA defines what it means within a deployment and how agents should reason about it. Complementary, not competing.
 
@@ -1249,10 +1267,11 @@ Conformance levels are declared by host implementations (Section 2). Table B.1 l
 | Operator MUST NOT loosen a `prohibited` or `read_only` declaration | 4 | L2 MUST |
 | Loosening inherited `confirm` to `autonomous` requires entity-level `user`-origin profile with `override_control_mode: true` and `control_reason` | 5.7 | L1 MUST |
 | `triggers_automations: likely` is sticky upward; `none` is not sticky | 5.6 | L1 MUST |
+| Device-scope profiles resolved via the HA device registry mapping; inert without it | 5.6 | L2 SHOULD |
 | Sidecar profiles without `metadata_origin` default to `source: developer`; all other locations default to `source: unknown` | 5.3 | L1 MUST |
 | Orphaned profiles (entity ID no longer in registry) detected and surfaced | 5.5 | L2 SHOULD |
 | Rule D: scope precedence among trusted origins; `inferred_ai`/`unknown` never override trusted-tier declarations | 5.7 | L1 MUST |
-| Operators can delete any profile of any origin, at any scope (entity, area, domain) | 3 | L2 MUST |
+| Operators can delete any profile of any origin, at any scope (entity, device, area, integration, domain) | 3 | L2 MUST |
 | Inferred profiles require opt-in in retrieval API | 5.4 | L2 MUST |
 | All inferred profiles default `control_mode: confirm` | 5.4 | L2 MUST |
 | Helper-domain inferred profiles default `triggers_automations: likely`; MUST NOT assert `none` | 5.4 | L2 MUST |
@@ -1293,14 +1312,26 @@ Conformance levels are declared by host implementations (Section 2). Table B.1 l
 
 ---
 
-## Errata
+## Version History
 
-**v1.0.1.** Section 5.7 Rule D described the trusted tier as `developer`, `user`, and `hybrid` without stating how it applies to a `hybrid` profile's unconfirmed fields, which conflicted with Section 5.4 Rule 6 ("unconfirmed fields remain inferred"). Rule D now states explicitly that a `hybrid` profile is trusted per field, only for the paths in its `confirmed_fields`, and that its unconfirmed fields resolve in the lower (inferred) tier. This is a clarification in the safe direction: an implementation that read Rule D as making every `hybrid` field trusted would have let an unconfirmed hybrid value, including a privacy `access_roles` field, override or relax a trusted declaration, which Rule 6 already forbids. Implementations SHOULD confirm they resolve unconfirmed hybrid fields as inferred. No profile format field changed; the profile `schema_version` remains `1.0`.
+### 1.1.0
 
-**v1.0.1.** Field paths (`confirmed_fields`, explanation `field_path`) were described as "dot-notation" without a grammar, leaving two readings undefined: whether confirming an object-valued path also confirms its descendants, and how a literal property name containing a `.` is addressed (it renders identically to a nested path). Section 5.7 now defines the grammar: a path parses as `.`-separated segments, a confirmed path covers the whole value beneath it, and a property name containing a `.` (or `\`) is not path-addressable, so a confirmation intended for a nested path must not also trust a same-rendering literal key. This closes a trust ambiguity in the safe direction; property names without dots, which is every field this specification defines, are unaffected. No profile format field changed; the profile `schema_version` remains `1.0`.
+The first minor revision, and the first in which the document version and the profile format `schema_version` move together: profile `schema_version` becomes `1.1`. All changes are additive; every valid 1.0 document remains valid under 1.1.
 
-**v1.0.1.** Section 9.5 described the explanation entry's `conflict` field as "whether multiple levels declared values for this field", which could be read as flagging a conflict even when every level declared the identical value. That reading is not what the resolution rules of Section 5.7 mean by a conflict (identical declarations agree; there is nothing to resolve), and it would make `conflicts_detected` nearly always true in any layered deployment, destroying its diagnostic value. The wording now states that `conflict` indicates multiple levels declared differing values. `conflict_resolution` and `competing_values` accompany only such genuine disagreements. No profile format field changed; the profile `schema_version` remains `1.0`.
+- **Device inheritance scope.** A fifth inheritance level, `device`, keyed by the HA device registry entry that owns an entity, ranked between `entity` and `area` (Sections 5.2, 5.6, 5.7). Resolution requires a host-supplied entity-to-device mapping; without it, device-scope profiles are inert. The Rule A and Rule B loosening overrides remain valid at entity scope only.
+- **Unknown enum values.** Section 23 now states normatively that unknown values in safety-relevant enums fail validation loudly and are never coerced or degraded, and that enum additions are minor-version changes. A 1.0 reader therefore rejects device-scoped documents; upgrade readers before writers.
+- **Capability hint resolution.** Section 4 now defines how `capability_semantics.control_mode` participates in Rule A: as the integration-scoped profile's contribution when its `operational_boundaries.control_mode` is absent, attributed below every operational_boundaries declaration. The precedence list also gains the previously omitted domain level.
+- **Retrieval API.** `mesa_query_profiles` gains `devices` and `integrations` filters (Sections 2, 9.2). `component_type` is narrowed to the values a query can actually emit (Section 9.3). The explanation `provided_by_level` enum gains `device` (Section 9.5). A new `unknown_tool` error code is defined, and `unauthorized`/`rate_limited` are clarified as host-emitted only (Section 9.6).
+- **Corrections.** The Section 3 deletion requirement now lists all five scopes (it omitted `integration`), as does the matching Appendix B row.
+
+### 1.0.1
+
+Three clarifications, all merged into the running text of Sections 5.7 and 9.5; none changed the profile format, and the profile `schema_version` remained `1.0`.
+
+- **Per-field hybrid trust.** Rule D states explicitly that a `hybrid` profile is trusted per field, only for the paths in its `confirmed_fields`; unconfirmed fields resolve in the lower (inferred) tier, consistent with Section 5.4 Rule 6. The safe-direction reading: an unconfirmed hybrid value can never override or relax a trusted declaration.
+- **Field-path grammar.** Field paths parse as `.`-separated segments; a confirmed path covers the whole value beneath it; a literal property name containing `.` (or `\`) is not path-addressable, so a confirmation intended for a nested path cannot also trust a same-rendering literal key.
+- **Conflict means differing values.** The explanation `conflict` field indicates that multiple levels declared differing values; identical declarations at several levels agree and are not a conflict.
 
 ---
 
-*MESA - Metadata and Environment Semantics for Agents. Version 1.0.1. Core specification. See also: MESA Overview, MESA Enrichment, MESA Getting Started Guide, and mesa-core Module Proposal. Discussion and contributions are welcome via GitHub Issues.*
+*MESA - Metadata and Environment Semantics for Agents. Version 1.1.0. Core specification. See also: MESA Overview, MESA Enrichment, MESA Getting Started Guide, and mesa-core Module Proposal. Discussion and contributions are welcome via GitHub Issues.*
