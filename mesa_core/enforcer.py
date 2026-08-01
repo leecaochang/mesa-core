@@ -27,6 +27,7 @@ from mesa_core.inheritance import InheritanceResolver
 from mesa_core.privacy import CallerContext, PrivacyEnforcer
 from mesa_core.profile import (
     DOMAIN_SAFETY_BASELINE,
+    HA_TARGET_SELECTOR_KEYS,
     ControlMode,
     MetadataOrigin,
     SemanticProfile,
@@ -59,6 +60,49 @@ class EnforcementResult:
     effective_profile: SemanticProfile
     warnings: list[str] = field(default_factory=list)
     confirmation_challenge: dict[str, Any] | None = None
+
+
+def _target_conflict(entity_id: str, service_params: dict[str, Any]) -> str | None:
+    """Why these parameters target something other than ``entity_id``, or None.
+
+    A decision covers exactly the entity it was evaluated for, but Home
+    Assistant lets an action name its target several other ways: an
+    ``entity_id`` in the service data, a ``device_id``/``area_id``/
+    ``floor_id``/``label_id`` selector, or a nested ``target`` block carrying
+    any of those. Each can reach entities this evaluation never considered, and
+    only the host can resolve a selector to entities, so a call carrying one is
+    refused rather than evaluated against the single entity it was handed:
+    otherwise a challenge approved for a light could execute against a lock, a
+    whole area, or a floor.
+    """
+
+    def conflict_in(mapping: dict[str, Any], where: str) -> str | None:
+        if "entity_id" in mapping and mapping["entity_id"] != entity_id:
+            return (
+                f"{where} names entity_id {mapping['entity_id']!r}, but policy was "
+                f"evaluated for {entity_id!r}"
+            )
+        for key in HA_TARGET_SELECTOR_KEYS:
+            if key in mapping:
+                return (
+                    f"{where} carries the target selector {key}={mapping[key]!r}, which "
+                    f"can select entities other than {entity_id!r} and can only be "
+                    "resolved by the host"
+                )
+        return None
+
+    direct = conflict_in(service_params, "service_params")
+    if direct is not None:
+        return direct
+    if "target" in service_params:
+        target = service_params["target"]
+        if not isinstance(target, dict):
+            return (
+                f"service_params carries a target of type {type(target).__name__}, "
+                "which names no resolvable entity"
+            )
+        return conflict_in(target, "service_params.target")
+    return None
 
 
 def _canonical_params(params: dict[str, Any] | None) -> str:
@@ -361,18 +405,12 @@ class MesaEnforcer:
         # inside the service data, which is exactly how a caller-supplied
         # parameter reaches the wire. Denied rather than reconciled: there is
         # no safe way to guess which target the operator meant.
-        # Presence, not string-mismatch: a list, a null, or any other shape is
-        # equally contradictory. Home Assistant accepts a list of entity IDs in
-        # service data, and ["light.x", "lock.front_door"] would otherwise be
-        # evaluated for light.x alone and hand back an approvable challenge
-        # covering the lock too. Policy is per entity, so a multi-entity call is
-        # evaluated by calling this once per entity.
-        if "entity_id" in service_params and service_params["entity_id"] != entity_id:
-            params_entity = service_params["entity_id"]
+        conflict = _target_conflict(entity_id, service_params)
+        if conflict is not None:
             reason = (
-                f"contradictory target: service_params names {params_entity!r} but policy "
-                f"was evaluated for {entity_id!r}; pass the target once, and evaluate "
-                "each entity of a multi-entity call separately"
+                f"contradictory target: {conflict}. Separate target data from service "
+                "data, resolve every selector to entities yourself, and evaluate each "
+                "one; a decision made here covers only the entity it was given"
             )
             audit_result = EnforcementResult(
                 allowed=False,
@@ -392,7 +430,7 @@ class MesaEnforcer:
                     roles=caller_context.effective_roles() if caller_context else [],
                     profile_version=profile.metadata.profile_version,
                     rule_applied="contradictory_target",
-                    details={"service_params_entity_id": params_entity},
+                    details={"conflict": conflict},
                 ),
                 level=logging.WARNING,
             )

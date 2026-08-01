@@ -290,8 +290,10 @@ class SemanticProfile:
     # be called with the same value (and freshness() evaluates once for both),
     # so a one-shot iterable would be exhausted by the first call and read as
     # an empty registry afterwards, inventing removal warnings. The host
-    # callback carries the same requirement: it runs once per entity, so a
-    # generator handed back each time is drained by the first row of a query.
+    # callback carries the same requirement: it runs once per entity, so one
+    # generator reused across those calls is drained by the first row of a
+    # query. (A freshly built generator each call would survive, but nothing
+    # can distinguish the two, so a one-shot value is refused either way.)
     def freshness(self, now: Optional[datetime] = None, *,
                   known_entity_ids: Optional[Collection[str]] = None,
                   integration_version: Optional[str] = None,
@@ -1132,6 +1134,20 @@ register_mesa_tools(
 async def call_ha_service(domain: str, service: str, entity_id: str,
                           service_data: Optional[dict[str, Any]] = None,
                           confirmation_token: Optional[dict[str, Any]] = None):
+    # This tool is entity-targeted, so service_data carries service data only.
+    # Home Assistant lets an action name its target as a device, area, floor,
+    # or label, or in a nested `target` block, and any of those can reach
+    # entities this call never evaluated. Reject them here rather than forward
+    # them: a decision covers exactly the entity it was made for. See
+    # "Multi-target calls" below for the multi-entity path.
+    targets = {"entity_id", "device_id", "area_id", "floor_id", "label_id", "target"}
+    stray = targets & set(service_data or {})
+    if stray:
+        raise MesaEnforcementError(
+            f"service_data must not carry target fields {sorted(stray)}; "
+            "this tool acts on the entity_id argument"
+        )
+
     # Evaluate the MESA profile before calling HA. Pass the REAL parameters: a
     # declared limit whose parameter is absent from service_params is skipped,
     # so dropping service_data here silently drops volume, brightness, and
@@ -1139,11 +1155,10 @@ async def call_ha_service(domain: str, service: str, entity_id: str,
     result = await enforcer.aevaluate(
         entity_id=entity_id,
         service=f"{domain}.{service}",
-        # The validated target wins: expanding service_data last would let a
-        # caller-supplied entity_id replace it, so policy would be chosen for
-        # one entity while the executed call and the approved confirmation
-        # challenge named another. mesa-core denies that mismatch outright,
-        # but do not construct it in the first place.
+        # The validated target goes last regardless, so nothing a caller sends
+        # can displace it. mesa-core also refuses any service_params that name
+        # a different entity or carry a target selector, so a challenge can
+        # never be approved for one entity and executed against another.
         service_params={**(service_data or {}), "entity_id": entity_id},
         caller_context=get_caller_context(),
         current_time=datetime.now(),
@@ -1163,6 +1178,39 @@ async def call_ha_service(domain: str, service: str, entity_id: str,
     # Proceed with HA API call
     ...
 ```
+
+**Multi-target calls.** A MESA decision covers exactly the entity it was
+evaluated for. Home Assistant actions routinely target more than one, and
+Home Assistant itself recommends `device_id` for device-level actions, so this
+is ordinary integration work rather than an exotic case. `MesaEnforcer` refuses
+a call whose parameters carry an alternate target, because it cannot resolve a
+selector and must not approve a decision that would reach entities it never
+considered. The host owns that expansion:
+
+1. **Separate target from data.** Take `entity_id`, `device_id`, `area_id`,
+   `floor_id`, `label_id`, and any nested `target` block out of the service
+   data. What remains is service data, and it is what carries the parameters
+   declared limits are written against.
+2. **Expand every selector to entities** through the HA registries, the same
+   knowledge `expand_target` supplies to `TriggerValidator`. Remember that an
+   entity inherits its device's area, so an area selector reaches entities
+   whose own `area_id` is unset.
+3. **Evaluate each resolved entity** with the shared service data. Policy
+   differs per entity: a `light.turn_on` across an area may be autonomous for
+   most lights and `confirm` or `prohibited` for one.
+4. **Require every decision to allow before acting.** A partial call is the
+   dangerous outcome: it executes against the permitted entities and leaves the
+   agent believing the whole action succeeded. Deny the action and report which
+   entities blocked it.
+5. **Confirm per entity.** Each `confirm` entity produces its own challenge
+   bound to its own parameters, and each token is single-use and matched
+   against exactly the entity, service, and parameters challenged. Present them
+   together if you like, but resubmit each with its own token; there is no
+   token that approves a group.
+
+The equivalent shortcut, evaluating one entity and executing against the whole
+target, is what the enforcer refuses: the operator would approve what they were
+shown and the call would act on what they were not.
 
 ### 6.3 Framework Adapters
 
@@ -1216,7 +1264,7 @@ mesa-core never talks to Home Assistant. Every piece of HA registry or state kno
 | `expand_target` | `TriggerValidator`, `entities_by_role` | Indirect references (device triggers, purpose-specific trigger target selectors) are invisible; a stale `none` declaration behind them passes unflagged. |
 | `caller_context_fn` | `register_mesa_tools` | Tools respond as an anonymous, role-less caller; lease session scoping degrades. |
 | `get_semantic_moments` | `register_mesa_tools` / `MesaToolHandlers` | `mesa_get_profile` never includes the `semantic_moments` block; agents fall back to profile-declared automation semantics. |
-| `get_validity_context` | `register_mesa_tools` / `MesaToolHandlers` | The `profile_valid_for` registry and version triggers cannot be evaluated, so an invalidated profile keeps reporting `staleness_status: current` and no invalidation warning is surfaced (Specification 5.4, 5.5). `review_after_days` is evaluated either way. Called once per entity, with that entity's ID. Must be synchronous, like the resolver callbacks: an `async def` returns a coroutine rather than a context, which mesa-core refuses with a logged warning rather than reading as an empty context. Values are type-checked, and a wrong-typed one is dropped with a warning; `known_entity_ids` must be a reusable collection of entity IDs, a set or list: a generator or a bare string is refused, because the callback runs once per entity and a one-shot value would be drained by the first row of a query. |
+| `get_validity_context` | `register_mesa_tools` / `MesaToolHandlers` | The `profile_valid_for` registry and version triggers cannot be evaluated, so an invalidated profile keeps reporting `staleness_status: current` and no invalidation warning is surfaced (Specification 5.4, 5.5). `review_after_days` is evaluated either way. Called once per entity, with that entity's ID. Must be synchronous, like the resolver callbacks: an `async def` returns a coroutine rather than a context, which mesa-core refuses with a logged warning rather than reading as an empty context. Values are type-checked, and a wrong-typed one is dropped with a warning; `known_entity_ids` must be a reusable collection of entity IDs (a set, list, tuple, or any other `Collection[str]`): a generator or a bare string is refused, because the callback runs once per entity and a one-shot value reused across those calls would be drained by the first row of a query. |
 | `on_lease_event` | `LeaseManager` | `mesa_lease_expired` events are not bridged to the HA event bus. |
 
 ---

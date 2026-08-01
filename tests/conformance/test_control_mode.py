@@ -494,6 +494,42 @@ def test_non_string_targets_are_denied_too() -> None:
         assert result.confirmation_challenge is None, params_entity
 
 
+def test_alternate_home_assistant_targets_are_denied() -> None:
+    # An action can name its target as a device, area, floor, or label, or in a
+    # nested target block. Each can reach entities this evaluation never saw,
+    # and only the host can resolve a selector, so a decision made here would
+    # be an approval for the wrong thing.
+    enforcer = MesaEnforcer(store=_confirm_store(), mode="enforced")
+    for params in (
+        {"device_id": "abc123"},
+        {"area_id": "kitchen"},
+        {"floor_id": "upstairs"},
+        {"label_id": "security"},
+        {"device_id": ["abc123", "def456"]},
+        {"target": {"device_id": "abc123"}},
+        {"target": {"area_id": "kitchen"}},
+        {"target": {"entity_id": "lock.front_door"}},
+        {"target": "kitchen"},
+    ):
+        result = enforcer.evaluate(
+            entity_id="light.x", service="light.turn_on", service_params=params
+        )
+        assert not result.allowed, params
+        assert result.rule_applied == "contradictory_target", params
+        assert result.confirmation_challenge is None, params
+
+
+def test_a_target_block_naming_only_the_evaluated_entity_is_allowed() -> None:
+    enforcer = MesaEnforcer(store=_confirm_store(), mode="enforced")
+    result = enforcer.evaluate(
+        entity_id="light.x",
+        service="light.turn_on",
+        service_params={"target": {"entity_id": "light.x"}, "brightness": 255},
+    )
+    assert result.rule_applied != "contradictory_target"
+    assert result.confirmation_challenge is not None
+
+
 def test_matching_or_absent_entity_id_in_service_params_is_unaffected() -> None:
     enforcer = MesaEnforcer(store=_confirm_store(), mode="enforced")
     for params in (

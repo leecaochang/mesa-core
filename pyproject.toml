@@ -38,9 +38,11 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-# Both bounds are verified, not guessed. fastmcp 2.12 is the oldest release the
-# adapter tests pass against (2.10 and 2.11 do not import on the supported
-# Pythons, and 2.0 fails at server construction); 3.x passes in full, and the
+# fastmcp 2.12 is the chosen supported floor, not the oldest release that
+# happens to work: some earlier 2.11.x patches also pass, but support is
+# declared per minor. 2.12 and 2.14 pass the adapter tests (verified on 3.13
+# and 3.14, RuntimeWarning promoted to error), as does 3.x; releases below the
+# floor fail to import or to construct a server on the supported Pythons. The
 # upper bound holds the line at the next major. The MCP SDK v2 rewrite moves
 # the import paths both adapters use, so that extra stays on v1.
 fastmcp = ["fastmcp>=2.12,<4"]

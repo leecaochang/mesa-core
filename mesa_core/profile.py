@@ -94,6 +94,13 @@ HELPER_DOMAINS: frozenset[str] = frozenset(
     }
 )
 
+# Home Assistant target selectors: keys that name what an action acts on
+# instead of how. Each can expand to entities other than the one named, and
+# only the host can resolve them, so the enforcer refuses to evaluate a call
+# carrying one (mesa-core decides policy per entity) and TriggerValidator asks
+# the host to expand them. Shared so the two cannot drift apart.
+HA_TARGET_SELECTOR_KEYS: tuple[str, ...] = ("area_id", "device_id", "floor_id", "label_id")
+
 # Built-in domain safety baseline (Spec 5.8). Applies only when an entity has no
 # profile at any inheritance level and no deployment_defaults are configured.
 DOMAIN_SAFETY_BASELINE: dict[str, ControlMode] = {
