@@ -252,7 +252,7 @@ class ProfileStore:
         for entity_id in entity_ids:
             self.delete(entity_id)
 
-    # -- domain / area profiles -----------------------------------------------
+    # -- domain / integration / area profiles ---------------------------------
 
     def get_domain_profile(self, domain: str) -> SemanticProfile | None:
         data = self.backend.read(f"{_DOMAIN_PREFIX}{domain}")

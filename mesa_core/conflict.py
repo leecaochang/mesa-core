@@ -88,7 +88,7 @@ _ACCESS_DECISION_FIELDS = frozenset(
 
 @dataclass
 class Layer:
-    """One inheritance level's profile: level is 'entity', 'area', or 'domain'."""
+    """One inheritance level's profile: level is 'entity', 'area', 'integration', or 'domain'."""
 
     level: str
     profile: SemanticProfile
