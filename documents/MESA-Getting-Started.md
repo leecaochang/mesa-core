@@ -1198,7 +1198,7 @@ for issue in issues:
     print(f"WARNING: {issue.entity_id} declared none but found in {issue.automation_id} as {issue.role}")
 ```
 
-**`mesa-lint`. Shipped** (`pip install mesa-lint`, https://github.com/sfox38/mesa-lint). A CI-friendly CLI that validates MESA profile documents with mesa-core's own validator, so the linter and the library agree on what is malformed by construction: schema violations, invalid enum values, malformed inferred profiles (missing `confidence` or `generated_at`), non-canonical predicate operator tokens, and tag format. On top of validation it adds deployment lint rules:
+**`mesa-lint`. Shipped** (`pip install mesa-lint`, https://github.com/leecaochang/mesa-lint). A CI-friendly CLI that validates MESA profile documents with mesa-core's own validator, so the linter and the library agree on what is malformed by construction: schema violations, invalid enum values, malformed inferred profiles (missing `confidence` or `generated_at`), non-canonical predicate operator tokens, and tag format. On top of validation it adds deployment lint rules:
 - `control_mode: confirm` or `prohibited` without a `control_reason`
 - person entities without a privacy classification
 - `triggers_automations: none` declared on helper entities

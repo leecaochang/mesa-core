@@ -1349,7 +1349,7 @@ The mesa-core package ships a conformance test suite that any MESA implementatio
 ### 7.1 Running the Suite
 
 ```bash
-git clone https://github.com/[owner]/mesa-core
+git clone https://github.com/leecaochang/mesa-core
 cd mesa-core
 pip install -e ".[test]"
 pytest tests/conformance/ -v
@@ -1437,7 +1437,7 @@ mesa-core 1.x implements the MESA Specification at Levels 1 and 2 in full and at
 
 ### Added in Version 1.2
 
-**Profile export and import.** `export_profiles()` / `import_profiles()` and their async variants: the portable archive format for moving complete profile sets between deployments, backends, and host servers. Faithful export, validated import, explicit conflict policy. See Section 4.12. The `mesa-lint` CLI also shipped in this cycle as a separate package (https://github.com/sfox38/mesa-lint).
+**Profile export and import.** `export_profiles()` / `import_profiles()` and their async variants: the portable archive format for moving complete profile sets between deployments, backends, and host servers. Faithful export, validated import, explicit conflict policy. See Section 4.12. The `mesa-lint` CLI also shipped in this cycle as a separate package (https://github.com/leecaochang/mesa-lint).
 
 **Solar-angle temporal conditions.** The `solar_angle` condition type evaluates through the `get_solar_elevation` host callback: each `solar_event` is an elevation-boundary crossing, and `solar_offset_minutes` shifts the transition by sampling the elevation in the past. No astronomy dependency; without the callback the condition stays fail-closed as in 1.1. See Section 4.7.
 
@@ -1507,7 +1507,7 @@ Do not fork mesa-core to customise it. Subclass or extend the relevant component
 **From source:**
 
 ```bash
-git clone https://github.com/[owner]/mesa-core
+git clone https://github.com/leecaochang/mesa-core
 cd mesa-core
 pip install -e ".[test]"
 pytest

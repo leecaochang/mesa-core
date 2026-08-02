@@ -9,7 +9,7 @@ description = "Reference implementation of the MESA specification: a semantic sa
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
-authors = [{ name = "Steven Fox", email = "sfox38@gmail.com" }]
+authors = [{ name = "Linus Lee", email = "311940018+leecaochang@users.noreply.github.com" }]
 keywords = [
     "home-assistant",
     "home-automation",
@@ -50,8 +50,8 @@ test = ["pytest>=8", "jsonschema>=4", "pyyaml>=6"]
 dev = ["ruff>=0.6", "mypy>=1.11", "pytest>=8", "jsonschema>=4", "pyyaml>=6"]
 
 [project.urls]
-Homepage = "https://github.com/sfox38/mesa-core"
-Documentation = "https://github.com/sfox38/mesa-core/tree/main/documents"
+Homepage = "https://github.com/leecaochang/mesa-core"
+Documentation = "https://github.com/leecaochang/mesa-core/tree/main/documents"
 
 [tool.hatch.build.targets.wheel]
 packages = ["mesa_core"]

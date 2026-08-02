@@ -19,7 +19,7 @@ Please do not open a public issue for a suspected vulnerability.
 Report it privately by either:
 
 - GitHub's "Report a vulnerability" button under the repository's Security tab (a private advisory), or
-- email to sfox38@gmail.com with "mesa-core security" in the subject.
+- email to 311940018+leecaochang@users.noreply.github.com with "mesa-core security" in the subject.
 
 Include the affected version, the impact, and a minimal profile plus service call that reproduces it. mesa-core has zero runtime dependencies, so a reproduction is usually a small self-contained Python snippet.
 

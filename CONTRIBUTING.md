@@ -21,7 +21,7 @@ If you find a place where mesa-core does something the spec does not describe, o
 The README has the canonical setup. In short:
 
 ```bash
-git clone https://github.com/sfox38/mesa-core
+git clone https://github.com/leecaochang/mesa-core
 cd mesa-core
 pip install -e ".[dev]"
 ```

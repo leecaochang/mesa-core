@@ -1,14 +1,16 @@
 
 # mesa-core
 
-[![CI](https://github.com/sfox38/mesa-core/actions/workflows/ci.yml/badge.svg)](https://github.com/sfox38/mesa-core/actions/workflows/ci.yml)
+[![CI](https://github.com/leecaochang/mesa-core/actions/workflows/ci.yml/badge.svg)](https://github.com/leecaochang/mesa-core/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/mesa-core.svg)](https://pypi.org/project/mesa-core/)
 
 mesa-core decides whether an AI agent should be allowed to act on a smart-home device, and how cautious it should be about it.
 
 When an assistant tries to turn on a light, unlock the front door, or change the thermostat, mesa-core answers three questions: is this allowed, should the user confirm it first, and why. It ships with safe defaults (a light is fine to control automatically; unlike a lock) that you refine for each home.
 
-It is the reference implementation of the [MESA specification](https://github.com/sfox38/mesa-core/blob/main/documents/MESA-Specification.md). It has no runtime dependencies and never talks to Home Assistant directly: you hand it device state through callback functions, and it hands you decisions.
+It is the reference implementation of the [MESA specification](https://github.com/leecaochang/mesa-core/blob/main/documents/MESA-Specification.md). It has no runtime dependencies and never talks to Home Assistant directly: you hand it device state through callback functions, and it hands you decisions.
+
+注意：我不是 MESA 的原始开发者。我维护这个分支，但仅限于修复缺陷和实现已有规范，不会添加新功能。
 
 ```bash
 pip install mesa-core
@@ -94,18 +96,18 @@ if profile is not None:
 
 ## Documentation
 
-- [MESA Overview](https://github.com/sfox38/mesa-core/blob/main/documents/MESA-Overview.md) - the problem MESA solves, in plain terms
-- [Getting Started](https://github.com/sfox38/mesa-core/blob/main/documents/MESA-Getting-Started.md) - write your first profile
-- [Specification](https://github.com/sfox38/mesa-core/blob/main/documents/MESA-Specification.md) - the full normative reference
-- [Enrichment](https://github.com/sfox38/mesa-core/blob/main/documents/MESA-Enrichment.md) - optional advanced domains
-- [Module Proposal](https://github.com/sfox38/mesa-core/blob/main/documents/MESA-Module.md) - how this library is built
+- [MESA Overview](https://github.com/leecaochang/mesa-core/blob/main/documents/MESA-Overview.md) - the problem MESA solves, in plain terms
+- [Getting Started](https://github.com/leecaochang/mesa-core/blob/main/documents/MESA-Getting-Started.md) - write your first profile
+- [Specification](https://github.com/leecaochang/mesa-core/blob/main/documents/MESA-Specification.md) - the full normative reference
+- [Enrichment](https://github.com/leecaochang/mesa-core/blob/main/documents/MESA-Enrichment.md) - optional advanced domains
+- [Module Proposal](https://github.com/leecaochang/mesa-core/blob/main/documents/MESA-Module.md) - how this library is built
 
 ## Status
 
 mesa-core v1.3.0 is ready for use: profile storage and five-level inheritance (including the device scope of MESA 1.1), enforcement with confirmation, temporal constraints including solar conditions, the MCP retrieval tools, privacy controls, the advisory lease protocol, and portable profile export/import are all implemented. Multi-agent lease preemption is planned for v2.
 
 ```bash
-git clone https://github.com/sfox38/mesa-core
+git clone https://github.com/leecaochang/mesa-core
 cd mesa-core
 pip install -e ".[dev]"
 pytest tests/ -v       # test suite
