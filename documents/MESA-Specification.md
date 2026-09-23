@@ -136,7 +136,7 @@ Full MESA implementation including semantic retrieval API, enforcement, and opti
 - MUST support domain, tag, area, device, integration, intent, and origin filtering.
 - MUST support pagination.
 - MUST require authentication equivalent to the host platform's API authentication.
-- SHOULD capture pre-execution snapshots for `snapshot_restorable` automations before they fire. Full snapshot support is expected in a future revision.
+- SHOULD capture pre-execution snapshots for `snapshot_restorable` automations before they fire, and MUST capture them before promising snapshot restoration. Capture and restoration are host responsibilities; mesa-core does not implement them.
 - SHOULD deny lease requests for entities under `protected` or `critical` automation control. This requirement becomes MUST when lease tools are implemented.
 - SHOULD support `enforced` mode. When supported, the server MUST reject service calls that violate `control_mode: prohibited` or active `declared_limits`. A Level 3 server that does not implement `enforced` mode is still conformant but cannot make the safety guarantees described in Section 3.
 
@@ -609,6 +609,8 @@ All predicate operators in MESA profiles SHOULD use the following canonical shor
 | `in` | Member of a list | `string`, `number` |
 | `contains` | String contains substring | `string` |
 
+`in` requires an array of strings or numbers. Numeric members use the same numeric comparison as `eq`; string members match exactly. Boolean, null, and object members are invalid. IDs in each `declared_limits` or `temporal_constraints` array MUST be unique within that declaration; reuse across inheritance layers remains permitted. Implementations MUST supplement structural JSON Schema validation with this semantic uniqueness check.
+
 **Predicate object schema:**
 
 | Field | Type | Required | Description |
@@ -980,7 +982,7 @@ All endpoints MUST require authentication equivalent to HA's API authentication.
 
 All filter fields are optional and combinable. An empty query returns all available profiles subject to pagination.
 
-**What "available" covers.** Query results are entity-keyed and enumerate the entities that carry a profile of their own. An entity covered only by a broader profile (domain, integration, area, or device) or by `deployment_defaults` has a fully resolved effective profile and is retrievable by exact ID through `mesa_get_profile`, but does not appear as a query row, because enumerating it would require the deployment's entity registry rather than the profile store. Hosts that want registry-wide coverage enumerate their own entities and retrieve each by ID.
+**What "available" covers.** Query results are entity-keyed and enumerate the entities that carry a profile of their own. An entity covered only by a broader profile (domain, integration, area, or device) has a fully resolved effective profile and is retrievable by exact ID through `mesa_get_profile`, but does not appear as a query row, because enumerating it would require the deployment's entity registry rather than the profile store. A default-only entity returns `not_found` from `mesa_get_profile`: defaults do not establish that an entity exists. Python `get_effective()` can still resolve defaults for arbitrary IDs. Hosts that want registry-wide coverage enumerate their own entities and provide profiles before retrieving each by ID.
 
 | Field | Type | Default | Description |
 |---|---|---|---|

@@ -143,7 +143,7 @@ Home Assistant state changes are not transactional. MESA models this through two
 | Value | Description |
 |---|---|
 | `stateless_destructive` | Cannot be reliably reversed. Pre-trigger state is not knowable, or restoring it would itself be disruptive. |
-| `snapshot_restorable` | Effects can be reversed by restoring entity state snapshots captured before the automation fired. A Level 3 host server MUST capture these snapshots. |
+| `snapshot_restorable` | Effects can be reversed by restoring entity state snapshots captured before the automation fired. A Level 3 host server SHOULD capture these snapshots before firing the automation, and MUST capture them before promising snapshot restoration. Snapshot capture and restoration are host responsibilities; mesa-core does not implement them. |
 
 | Field | Type | Required | Description |
 |---|---|---|---|

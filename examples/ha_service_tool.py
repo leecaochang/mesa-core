@@ -16,6 +16,7 @@ own HA client where `perform_ha_call` is injected.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from copy import deepcopy
 from datetime import datetime
 from typing import Any
 
@@ -55,7 +56,7 @@ def build_call_ha_service(
         # suspends at an await, and re-reading the original afterwards would
         # let a concurrent mutation forward a call that was never the one
         # evaluated. Check, evaluate, and execute must all see the same bytes.
-        data = dict(service_data or {})
+        data = deepcopy(service_data or {})
 
         # This tool is entity-targeted, so service data carries service data
         # only. Home Assistant also lets an action name its target as a device,

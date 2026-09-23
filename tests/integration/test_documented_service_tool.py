@@ -86,7 +86,7 @@ def test_documented_handler_registers_on_standalone_fastmcp() -> None:
 
     async def published() -> dict[str, Any]:
         async with fastmcp.Client(server) as client:
-            return {t.name: t.inputSchema for t in await client.list_tools()}["call_ha_service"]
+            return {t.name: t.model_dump(by_alias=True)["inputSchema"] for t in await client.list_tools()}["call_ha_service"]
 
     schema = asyncio.run(published())
     assert set(schema["properties"]) == EXPECTED_PROPERTIES

@@ -78,6 +78,10 @@ register_mesa_tools(store, adapter="fastmcp", server=app)
 
 Adapters ship for FastMCP and the MCP Python SDK (`pip install "mesa-core[fastmcp]"` or `"mesa-core[mcp]"`). Any other framework can implement a small registration protocol.
 
+FastMCP **4.0.5** is supported on Python 3.12–3.14, alongside FastMCP 2.12+ and 3.x. Install `mesa-core[fastmcp,mcp]` to use both adapters in the same environment. FastMCP 4 uses MCP SDK v2; the raw SDK adapter supports both SDK v1 and v2. Earlier FastMCP 4.0.x releases are excluded because 4.0.5 fixes strict argument validation that MESA relies on ([release notes](https://github.com/PrefectHQ/fastmcp/releases/tag/v4.0.5)).
+
+For FastMCP 4 use `from fastmcp import FastMCP`. The SDK's `mcp.server.fastmcp` import exists only in SDK v1: retain `mcp<2` if using that older host API, or migrate the host to standalone FastMCP. Do not combine the SDK v1 pin with FastMCP 4.
+
 Passing `lease_manager=LeaseManager(store)` also registers the advisory coordination tools (`mesa_request_lease`, `mesa_release_lease`), which let cooperating agents signal short-lived intent to each other. They are signals, not locks; see Enrichment Section 21 before relying on them.
 
 With a `get_semantic_moments` callback, `mesa_get_profile` can also surface the purpose-specific triggers and conditions an entity participates in (Home Assistant 2026.7+), live from HA, for agent context only.
@@ -104,7 +108,7 @@ if profile is not None:
 
 ## Status
 
-mesa-core v1.3.0 is ready for use: profile storage and five-level inheritance (including the device scope of MESA 1.1), enforcement with confirmation, temporal constraints including solar conditions, the MCP retrieval tools, privacy controls, the advisory lease protocol, and portable profile export/import are all implemented. Multi-agent lease preemption is planned for v2.
+mesa-core v1.3.1 is ready for use: profile storage and five-level inheritance (including the device scope of MESA 1.1), enforcement with confirmation, temporal constraints including solar conditions, the MCP retrieval tools, privacy controls, the advisory lease protocol, and portable profile export/import are all implemented. Multi-agent lease preemption is planned for v2.
 
 ```bash
 git clone https://github.com/leecaochang/mesa-core

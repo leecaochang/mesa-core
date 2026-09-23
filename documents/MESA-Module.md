@@ -964,7 +964,7 @@ register_mesa_tools(store=store, adapter="fastmcp", server=app)
 
 ### 6.2 Full Integration (Level 3)
 
-Full Level 3 integration with enforcement, leases, and caller context.
+Full Level 3 integration with enforcement, leases, and caller context. This example uses the **SDK v1** host API; install `mesa-core[mcp]` with `mcp>=1.27,<2` to run it. SDK v2 removes `mcp.server.fastmcp`; for FastMCP 4 hosts use `from fastmcp import FastMCP` and its authentication API. The MESA registration and service wrapper are shared across both paths.
 
 ```python
 from mesa_core import ProfileStore, MesaEnforcer
@@ -1140,6 +1140,7 @@ how several enforcement gaps reached this project, so the two are one object.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from copy import deepcopy
 from datetime import datetime
 from typing import Any
 
@@ -1179,7 +1180,7 @@ def build_call_ha_service(
         # suspends at an await, and re-reading the original afterwards would
         # let a concurrent mutation forward a call that was never the one
         # evaluated. Check, evaluate, and execute must all see the same bytes.
-        data = dict(service_data or {})
+        data = deepcopy(service_data or {})
 
         # This tool is entity-targeted, so service data carries service data
         # only. Home Assistant also lets an action name its target as a device,
@@ -1377,7 +1378,7 @@ The conformance suite runs from a source checkout. The `tests/` directory is not
 
 ### 7.3 Malformed Profile Fixtures
 
-The test suite ships five malformed profile JSON files that MUST be rejected by any conforming Level 1 implementation.
+The `tests/conformance/malformed/` directory contains 43 JSON fixtures: 42 MUST be rejected and `trust_laundering.json` MUST produce an advisory warning. The five original cases below illustrate the distinction; the directory and its parametrised tests are the complete inventory.
 
 **missing_confidence.json.** An `inferred_ai` profile without a `confidence` field.
 
@@ -1393,15 +1394,15 @@ The test suite ships five malformed profile JSON files that MUST be rejected by 
 
 ## 8. Version Scope
 
-mesa-core 1.x implements the MESA Specification at Levels 1 and 2 in full and at Level 3 including the retrieval API, enforcement, and the lease coordination tools; multi-agent lease preemption is the one Level 3 capability that waits for Version 2. The focus is on correctness and simplicity over completeness.
+mesa-core 1.x supplies profile storage, resolution, retrieval, enforcement, and advisory lease coordination. Host obligations and unsupported capabilities are described below; library use alone does not establish host conformance. The focus is on correctness and simplicity over completeness.
 
 ### Included in Version 1.0
 
 **Profile storage.** JsonFileBackend, SqliteBackend, MemoryBackend. Full CRUD operations. Deployment defaults. Orphan detection via `find_orphans()`.
 
-**SemanticProfile dataclass.** All kernel fields. All fields from Specification Sections 5 through 8. Serialisation and deserialisation from JSON/dict.
+**SemanticProfile dataclass.** All kernel fields. Typed safety, provenance, privacy, and person fields; other fields are preserved in `raw`. See the validation matrix below. Serialisation and deserialisation from JSON/dict.
 
-**Canonical JSON Schema.** A machine-readable JSON Schema file (`mesa_core/schemas/mesa_profile.schema.json`) defining the complete MESA profile structure as specified in the Specification. This is the canonical artifact for third parties, who can consume it directly without reimplementing validation from prose tables. A separate `mesa_tools.schema.json` defines the input schemas for all MCP tools.
+**Canonical JSON Schema.** A machine-readable JSON Schema file (`mesa_core/schemas/mesa_profile.schema.json`) defining the supported structural checks listed below. Full validation additionally requires semantic checks for unique IDs within each safety array; standard JSON Schema cannot express uniqueness by a single item property. This is the canonical artifact for third parties, who can consume it directly without reimplementing validation from prose tables. A separate `mesa_tools.schema.json` defines the input schemas for all MCP tools.
 
 **Profile validation.** Kernel field presence checks. Enum value validation for `control_mode`, `triggers_automations`, `privacy_classification.level`. Predicate operator validation (canonical tokens and `ha_condition` type). Tag format validation (canonical or `vendorname.qualifier`). Malformed inferred profile detection. Validation is hand-rolled to keep the core dependency-free; a dedicated test asserts it stays in agreement with the canonical JSON Schema on every fixture.
 
@@ -1421,7 +1422,7 @@ mesa-core 1.x implements the MESA Specification at Levels 1 and 2 in full and at
 
 **MCP tools.** `mesa_query_profiles` with full filtering and pagination. `mesa_get_profile`. `mesa_explain_profile`. `mesa_get_caller_context` (returns the host-provided caller context; required for Level 3). Adapters for FastMCP and raw MCP Python SDK.
 
-**Conformance test suite.** All seven test categories. All five malformed profile fixtures.
+**Conformance test suite.** All seven test categories. 42 hard-error fixtures and one warning-only fixture.
 
 ### Added in Version 1.1
 
@@ -1467,7 +1468,7 @@ The callback returns `list[dict]`, one entry per moment, each carrying at least 
 
 **Multi-agent lease collision resolution.** `caller_priority` field, role-to-priority mapping, preemption notification. Deferred until multiple agents in a single deployment is a common real-world scenario.
 
-**Snapshot management for `snapshot_restorable` automations.** Requires integration with HA state history. Architecture is defined; implementation deferred.
+**Snapshot management for `snapshot_restorable` automations.** The host SHOULD capture snapshots before firing these automations, and MUST do so before promising snapshot restoration. mesa-core does not capture or restore HA state; the host supplies that integration. Library support is deferred.
 
 **`binary_sensor.mesa_lease_active` HA entity.** Requires the host server to write to HA's entity registry. Implementation deferred to allow host servers to implement it natively.
 
@@ -1538,3 +1539,36 @@ SqliteBackend uses the standard library `sqlite3` module; async access is provid
 ---
 
 *mesa-core is the reference implementation of the MESA Specification. It is designed to be the lowest-friction path to MESA conformance for any MCP server developer. Issues, pull requests, and conformance test contributions are welcome via GitHub.*
+
+### Supported validation matrix
+
+| Fields | Validation and runtime support |
+|---|---|
+| Metadata origin, versions, inheritance scope, validity triggers | Known types/enums and conditional requirements; absent-origin defaults |
+| Operational boundaries, canonical predicates, limits, temporal constraints | Types, enums, operands and required fields; unique IDs per array checked semantically beyond JSON Schema |
+| Privacy classification and access roles; person traits; semantic tags | Known types/enums and tag vocabulary |
+| Semantic routing | Object; `intent_tags` and `enhances_domains` are string arrays |
+| Capability semantics | Object and `control_mode` enum; other members preserved without validation |
+| Native HA predicates | Condition object accepted; host evaluation is unsupported and limits fail closed |
+| Duration / relative-event conditions | Structure validated; evaluation unsupported and effects fail closed |
+| Diagnostic profile | Object only; contents preserved |
+| Other core/enrichment fields and vendor extensions | Preserved without comprehensive structural validation; lease consumers check priority and scope defensively |
+
+Schema agreement covers structural checks, not semantic ID uniqueness or advisory warnings.
+JSON backend replacement is atomic per file: readers see the old or new complete document.
+The temporary file is flushed and fsynced before replacement; directory fsync, power-loss
+durability, multi-file transactions, and cross-process write ordering are not guaranteed.
+
+Malformed automation policies, including invalid inherited layers, conservatively deny all requested leases because their protection scope cannot be established. Query candidates are resolved before pagination: malformed effective profiles are skipped with warnings and excluded from result counts and cursor offsets. This requires resolving every candidate surviving the inexpensive filters, including for an unfiltered query. Integration sidecars are read as UTF-8; malformed encoding or JSON raises `MesaValidationError`, while filesystem access errors remain distinguishable.
+
+The asynchronous MCP query, get, and explain handlers offload storage and resolution to worker threads. Synchronous registry, validity-context, and semantic-moment callbacks on these paths also run in workers and may bridge to the server loop using `asyncio.run_coroutine_threadsafe`. Caller-context lookup and privacy decisions stay on the request thread; context variables propagate to workers. Caller-context callbacks must return promptly from cached request identity and must not synchronously wait on their own event loop.
+
+Calendar callbacks must return a list of events: `[]` means a valid empty calendar, while a wrong-typed result or exception is unevaluable and keeps constraints active regardless of negation. Numeric enforcement preserves integer precision through decimal comparisons, with the existing finite-float range check defining when an operand is unevaluable. Automation reference traversal rejects cyclic configurations with `MesaValidationError` and accepts shared acyclic aliases.
+
+### FastMCP compatibility (verified 23 September 2026)
+
+FastMCP 4.0.5 with MCP SDK 2.2.0 passes the core suite on Python 3.12, 3.13, and 3.14. MESA's standalone adapter uses the unchanged `tool` decorator API. The raw SDK adapter selects SDK v1 decorators or SDK v2's public `add_request_handler` API and result wrappers. The `fastmcp` and `mcp` extras can be installed together; the resolver selects the SDK major required by the chosen FastMCP release.
+
+FastMCP 4.0.0–4.0.4 are excluded: 4.0.5 restores field-level strict validation used by MESA's boolean, integer, and numeric arguments. FastMCP 2.12.0 and 3.4.7 remain regression targets. CI tests 3.4.7 and 4.0.5 on every supported Python and the oldest supported release separately. Integration coverage includes schemas, malformed argument rejection, the documented confirmation wrapper, and all six registered MESA tools over real Streamable HTTP. SDK-v1-only host tests are skipped when SDK v2 is installed, not counted as FastMCP 4 coverage.
+
+MESA does not depend on FastMCP sampling, elicitation, background tasks, or other server-to-client callbacks removed or changed by the sessionless protocol. Host applications using those features must separately follow the [FastMCP 4 migration guide](https://gofastmcp.com/getting-started/upgrading/from-fastmcp-3). Compatibility here covers MESA's implemented tools and enforcement wrapper, not every feature an embedding host might add.

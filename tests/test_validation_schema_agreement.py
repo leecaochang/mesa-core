@@ -3,7 +3,8 @@
 mesa_core/schemas/mesa_profile.schema.json is the machine-readable artifact third
 parties consume; mesa_core/validation.py is the zero-dependency implementation.
 Hard-rejection parity is asserted across every fixture: a document is schema-invalid
-iff validate_document reports errors. (Warnings are validator-only by design.)
+iff validate_document reports structural errors. Duplicate safety IDs are an
+additional semantic check, tested separately. Warnings are validator-only.
 """
 
 from __future__ import annotations
