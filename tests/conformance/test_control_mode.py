@@ -36,24 +36,22 @@ def test_baseline_light_autonomous_allowed() -> None:
     assert result.allowed
 
 
-def test_read_only_blocks_regardless_of_enforcement_mode() -> None:
-    store = ProfileStore(backend=MemoryBackend())
-    store.set(
-        "sensor.diag",
-        make_profile("sensor.diag", boundaries={"control_mode": "read_only"}),
-    )
-    result = make_enforcer(store, mode="advisory").evaluate(
+def test_read_only_obeys_enforcement_mode() -> None:
+    store = ProfileStore(MemoryBackend())
+    store.set("sensor.diag", make_profile("sensor.diag", boundaries={"control_mode": "read_only"}))
+    advisory = make_enforcer(store, mode="advisory").evaluate(
         "sensor.diag", "sensor.set", current_time=NOON
     )
-    assert not result.allowed
-    assert result.rule_applied == "control_mode:read_only"
+    assert advisory.allowed and any("read-only" in w for w in advisory.warnings)
+    enforced = make_enforcer(store, mode="enforced").evaluate(
+        "sensor.diag", "sensor.set", current_time=NOON
+    )
+    assert not enforced.allowed and enforced.rule_applied == "control_mode:read_only"
 
 
 def test_prohibited_in_advisory_mode_warns_but_allows() -> None:
     store = ProfileStore(backend=MemoryBackend())
-    store.set(
-        "switch.x", make_profile("switch.x", boundaries={"control_mode": "prohibited"})
-    )
+    store.set("switch.x", make_profile("switch.x", boundaries={"control_mode": "prohibited"}))
     result = make_enforcer(store, mode="advisory").evaluate(
         "switch.x", "switch.turn_on", current_time=NOON
     )
@@ -118,9 +116,7 @@ def _challenge_setup() -> tuple[MesaEnforcer, dict[str, Any]]:
     store = ProfileStore(backend=MemoryBackend())
     store.set("cover.x", make_profile("cover.x", boundaries={"control_mode": "confirm"}))
     enforcer = make_enforcer(store)
-    first = enforcer.evaluate(
-        "cover.x", "cover.open_cover", {"position": 50}, current_time=NOON
-    )
+    first = enforcer.evaluate("cover.x", "cover.open_cover", {"position": 50}, current_time=NOON)
     assert not first.allowed and first.confirmation_challenge is not None
     return enforcer, first.confirmation_challenge
 
@@ -182,7 +178,11 @@ def test_confirmation_token_bound_to_exact_parameters() -> None:
     enforcer, challenge = _challenge_setup()
     token = _token(challenge)
     drifted = enforcer.evaluate(
-        "cover.x", "cover.open_cover", {"position": 100}, current_time=NOON, confirmation_token=token
+        "cover.x",
+        "cover.open_cover",
+        {"position": 100},
+        current_time=NOON,
+        confirmation_token=token,
     )
     assert not drifted.allowed
     assert "exact entity, service, and parameters" in drifted.reason
@@ -195,8 +195,11 @@ def test_unknown_challenge_rejected() -> None:
         "cover.open_cover",
         {"position": 50},
         current_time=NOON,
-        confirmation_token={"challenge_id": "forged", "approved_by": "user.alice",
-                            "approved_at": NOON.isoformat()},
+        confirmation_token={
+            "challenge_id": "forged",
+            "approved_by": "user.alice",
+            "approved_at": NOON.isoformat(),
+        },
     )
     assert not result.allowed
 
@@ -376,35 +379,24 @@ def test_unevaluable_predicate_fails_closed() -> None:
     assert any("fail-closed" in w for w in result.warnings)
 
 
-def test_empty_permitted_values_blocks_service() -> None:
-    data = json.loads((FIXTURES / "lock_full.json").read_text())
-    profile = SemanticProfile.from_dict("lock.front_door", data)
-    store = ProfileStore(backend=MemoryBackend())
-    store.set("lock.front_door", profile)
-    enforcer = make_enforcer(store, get_state=lambda eid: "on")  # door contact open
-
-    challenge = enforcer.evaluate(
+def test_empty_permitted_values_blocks_before_confirmation() -> None:
+    data = json.loads((FIXTURES / "lock_full.json").read_text(encoding="utf-8"))
+    store = ProfileStore(MemoryBackend())
+    store.set("lock.front_door", SemanticProfile.from_dict("lock.front_door", data))
+    enforcer = make_enforcer(store, get_state=lambda eid: "on")
+    result = enforcer.evaluate(
         "lock.front_door", "lock.lock", {"entity_id": "lock.front_door"}, current_time=NOON
     )
-    assert not challenge.allowed and challenge.confirmation_challenge is not None
-    token = _token(challenge.confirmation_challenge)
-    confirmed = enforcer.evaluate(
-        "lock.front_door",
-        "lock.lock",
-        {"entity_id": "lock.front_door"},
-        current_time=NOON,
-        confirmation_token=token,
-    )
-    # Even with confirmation, the declared limit blocks locking an open door.
-    assert not confirmed.allowed
-    assert confirmed.rule_applied == "declared_limit:no_lock_door_open"
+    assert not result.allowed
+    assert result.confirmation_challenge is None
+    assert result.rule_applied == "declared_limit:no_lock_door_open"
 
 
 # -------------------------------------------------------------- temporal integration
 
 
 def test_temporal_tightening_applies_before_control_mode() -> None:
-    data = json.loads((FIXTURES / "lock_full.json").read_text())
+    data = json.loads((FIXTURES / "lock_full.json").read_text(encoding="utf-8"))
     store = ProfileStore(backend=MemoryBackend())
     store.set("lock.front_door", SemanticProfile.from_dict("lock.front_door", data))
     enforcer = make_enforcer(store, get_state=lambda eid: "off")
@@ -421,7 +413,7 @@ def test_temporal_tightening_applies_before_control_mode() -> None:
 def test_unevaluable_calendar_negate_fails_closed_end_to_end() -> None:
     # The vacuum fixture: autonomous only during away blocks. Without a calendar
     # callback the negated condition is unevaluable -> active -> confirm required.
-    data = json.loads((FIXTURES / "vacuum_negate_temporal.json").read_text())
+    data = json.loads((FIXTURES / "vacuum_negate_temporal.json").read_text(encoding="utf-8"))
     store = ProfileStore(backend=MemoryBackend())
     store.set("vacuum.robot", SemanticProfile.from_dict("vacuum.robot", data))
     result = make_enforcer(store).evaluate("vacuum.robot", "vacuum.start", current_time=NOON)

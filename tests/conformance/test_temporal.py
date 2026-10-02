@@ -14,7 +14,9 @@ SATURDAY_LATE = datetime(2026, 6, 13, 23, 30)
 MONDAY_EARLY = datetime(2026, 6, 15, 5, 0)
 
 
-def boundaries(*constraints: dict[str, Any], control_mode: str = "confirm") -> OperationalBoundaries:
+def boundaries(
+    *constraints: dict[str, Any], control_mode: str = "confirm"
+) -> OperationalBoundaries:
     return OperationalBoundaries(
         control_mode=ControlMode(control_mode),
         temporal_constraints=list(constraints),

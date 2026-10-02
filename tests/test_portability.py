@@ -44,9 +44,7 @@ def populated_store() -> ProfileStore:
     store.set_integration_profile("hue", profile("hue"))
     store.set_area_profile("area.bedroom", profile("area.bedroom"))
     store.set_device_profile("dev1", profile("dev1"))
-    store.set_deployment_defaults(
-        {"deployment_defaults": {"default_control_mode": "confirm"}}
-    )
+    store.set_deployment_defaults({"deployment_defaults": {"default_control_mode": "confirm"}})
     return store
 
 
@@ -92,7 +90,9 @@ def test_archive_envelope_shape() -> None:
 def test_export_is_faithful_import_validates() -> None:
     source = populated_store()
     # A malformed document lands in storage behind the store's back.
-    source.backend.write("light.bad", {"semantic_profile": {"operational_boundaries": {"control_mode": "yolo"}}})
+    source.backend.write(
+        "light.bad", {"semantic_profile": {"operational_boundaries": {"control_mode": "yolo"}}}
+    )
     archive = export_profiles(source)
     # Export drops nothing.
     assert "light.bad" in archive["mesa_export"]["entities"]

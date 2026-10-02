@@ -159,12 +159,12 @@ def test_no_argument_tool_is_callable() -> None:
     ],
 )
 def test_schema_violations_are_rejected_at_the_transport(payload: dict[str, Any]) -> None:
-    with pytest.raises(Exception, match=r"(?i)valid|unexpected|error"):
+    with pytest.raises(fastmcp.exceptions.ToolError):
         call("mesa_query_profiles", payload)
 
 
 def test_missing_required_argument_is_rejected() -> None:
-    with pytest.raises(Exception, match=r"(?i)valid|required|missing"):
+    with pytest.raises(fastmcp.exceptions.ToolError):
         call("mesa_get_profile", {})
 
 
@@ -180,7 +180,7 @@ def test_missing_required_argument_is_rejected() -> None:
     ],
 )
 def test_strict_parameters_survive_framework_validation(payload: dict[str, Any]) -> None:
-    with pytest.raises(Exception, match=r"(?i)valid|unexpected|error"):
+    with pytest.raises(fastmcp.exceptions.ToolError):
         call("mesa_query_profiles", payload)
 
 
@@ -244,7 +244,7 @@ def test_streamable_http_retrieval_and_lease_roundtrip() -> None:
                     await client.call_tool("mesa_release_lease", {"lease_id": lease["lease_id"]})
                 ).data
                 assert "error" not in release
-                with pytest.raises(Exception, match=r"(?i)valid|unexpected|error"):
+                with pytest.raises(fastmcp.exceptions.ToolError):
                     await client.call_tool("mesa_query_profiles", {"include_inferred": "false"})
 
         asyncio.run(scenario())
@@ -253,3 +253,19 @@ def test_streamable_http_retrieval_and_lease_roundtrip() -> None:
         thread.join(timeout=10)
         sock.close()
         assert not thread.is_alive()
+
+
+def test_published_defaults_and_constraints_are_semantically_consistent():
+    from jsonschema import Draft202012Validator
+
+    for name, published in _lease_schemas().items():
+        declared = TOOL_SCHEMAS[name]
+        assert published.get("additionalProperties") is False
+        for key, schema in published["properties"].items():
+            if "default" in schema:
+                assert Draft202012Validator(declared["properties"][key]).is_valid(schema["default"])
+            for value in (None, False, 0, 0.0001, 1, 50.0, 201, "50", [], {}, ["light.x"]):
+                assert Draft202012Validator(schema).is_valid(value) == Draft202012Validator(
+                    declared["properties"][key]
+                ).is_valid(value), (name, key, value, schema)
+    assert call("mesa_query_profiles", {"limit": 50.0})["pagination"]["limit"] == 50

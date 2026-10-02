@@ -99,9 +99,7 @@ def test_entity_id_lists_and_plural_keys() -> None:
 TARGETED_AUTOMATIONS: list[dict[str, Any]] = [
     {
         "id": "automation.movie_mode",
-        "triggers": [
-            {"trigger": "occupancy.detected", "target": {"area_id": "area.living_room"}}
-        ],
+        "triggers": [{"trigger": "occupancy.detected", "target": {"area_id": "area.living_room"}}],
         "conditions": [{"condition": "device", "device_id": "washer-device-1"}],
         "actions": [],
     },
@@ -160,7 +158,10 @@ def test_async_variants_match_sync() -> None:
 
     async def run() -> None:
         issues = await validator.avalidate(lambda: AUTOMATIONS)
-        assert {i.entity_id for i in issues} == {"input_boolean.guest_mode", "binary_sensor.occupied"}
+        assert {i.entity_id for i in issues} == {
+            "input_boolean.guest_mode",
+            "binary_sensor.occupied",
+        }
         single = await validator.avalidate_entity("input_boolean.guest_mode", lambda: AUTOMATIONS)
         assert len(single) == 1 and single[0].role == "trigger"
 

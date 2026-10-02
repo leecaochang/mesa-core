@@ -90,7 +90,7 @@ def test_all_privacy_levels_accepted(value: str) -> None:
     ],
 )
 def test_malformed_fixtures_rejected(fixture: str) -> None:
-    data = json.loads((MALFORMED_DIR / fixture).read_text())
+    data = json.loads((MALFORMED_DIR / fixture).read_text(encoding="utf-8"))
     report = validate_document(data)
     assert not report.ok, f"{fixture} must be rejected"
     with pytest.raises(MesaValidationError):
@@ -98,7 +98,7 @@ def test_malformed_fixtures_rejected(fixture: str) -> None:
 
 
 def test_trust_laundering_surfaces_warning() -> None:
-    data = json.loads((MALFORMED_DIR / "trust_laundering.json").read_text())
+    data = json.loads((MALFORMED_DIR / "trust_laundering.json").read_text(encoding="utf-8"))
     report = validate_document(data)
     assert report.ok  # not a hard rejection
     assert any("trust laundering" in w for w in report.warnings)
@@ -192,8 +192,11 @@ def test_staleness_status_windows() -> None:
     assert stale.staleness_status(now) == "stale"
 
 
-def test_staleness_unknown_when_unparseable() -> None:
-    p = _inferred_profile("not-a-date")
+def test_unparseable_timestamp_is_rejected_at_ingestion() -> None:
+    with pytest.raises(MesaValidationError, match="ISO 8601"):
+        _inferred_profile("not-a-date")
+    p = _inferred_profile("2026-01-01")
+    p.metadata.generated_at = "not-a-date"
     assert p.staleness_status() == "unknown"
 
 
@@ -267,7 +270,9 @@ def test_person_traits_parsed_into_typed_model() -> None:
     assert p.declared("person_traits.is_minor")
     assert not p.declared("person_traits.presence_entity")
     # Raw round-trip is unchanged by the typed model.
-    assert p.to_dict()["semantic_profile"]["person_traits"] == doc["semantic_profile"]["person_traits"]
+    assert (
+        p.to_dict()["semantic_profile"]["person_traits"] == doc["semantic_profile"]["person_traits"]
+    )
 
 
 def test_person_traits_minimal_declaration_is_valid() -> None:

@@ -1,8 +1,7 @@
 
 # mesa-core
 
-[![CI](https://github.com/leecaochang/mesa-core/actions/workflows/ci.yml/badge.svg)](https://github.com/leecaochang/mesa-core/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/mesa-core.svg)](https://pypi.org/project/mesa-core/)
+[![CI](https://github.com/leecaochang/mesa-core/actions/workflows/ci.yml/badge.svg)](https://github.com/leecaochang/mesa-core/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/mesa-core.svg)](https://pypi.org/project/mesa-core/)
 
 mesa-core decides whether an AI agent should be allowed to act on a smart-home device, and how cautious it should be about it.
 
@@ -27,8 +26,8 @@ enforcer = MesaEnforcer(ProfileStore(backend=MemoryBackend()))
 # An AI agent wants to unlock the front door. Should it?
 result = enforcer.evaluate("lock.front_door", "lock.unlock")
 
-result.allowed   # False
-result.reason    # "Entity is prohibited by policy: lock.front_door"
+result.allowed  # False
+result.reason  # "Entity is prohibited by policy: lock.front_door"
 ```
 
 ## How decisions work
@@ -48,10 +47,25 @@ if result.confirmation_challenge:
     # present result.confirmation_challenge to the user; once approved,
     # build a confirmation_token from it and re-submit the same call:
     result = enforcer.evaluate(
-        "cover.garage", "cover.open_cover",
+        "cover.garage",
+        "cover.open_cover",
         confirmation_token=approved_token,
     )
 ```
+
+The host constructs this token only after authentic human approval; do not accept an agent's claim that approval occurred:
+
+```python
+from datetime import UTC, datetime
+
+approved_token = {
+    "challenge_id": result.confirmation_challenge["challenge_id"],
+    "approved_by": authenticated_user_id,
+    "approved_at": datetime.now(UTC).isoformat(),
+}
+```
+
+The challenge is bound to the same entity, canonical service and exact parameters, is single-use, and expires within 120 seconds.
 
 ## Reading a device's profile
 
@@ -63,7 +77,7 @@ from mesa_core.backends import JsonFileBackend
 
 store = ProfileStore(backend=JsonFileBackend("/config/mesa/"))
 profile = store.get_effective("light.living_room_ceiling")
-profile.operational_boundaries.control_mode   # ControlMode.AUTONOMOUS
+profile.operational_boundaries.control_mode  # ControlMode.AUTONOMOUS
 ```
 
 ## Exposing it to an AI agent (MCP)
@@ -78,7 +92,7 @@ register_mesa_tools(store, adapter="fastmcp", server=app)
 
 Adapters ship for FastMCP and the MCP Python SDK (`pip install "mesa-core[fastmcp]"` or `"mesa-core[mcp]"`). Any other framework can implement a small registration protocol.
 
-FastMCP **4.0.5** is supported on Python 3.12–3.14, alongside FastMCP 2.12+ and 3.x. Install `mesa-core[fastmcp,mcp]` to use both adapters in the same environment. FastMCP 4 uses MCP SDK v2; the raw SDK adapter supports both SDK v1 and v2. Earlier FastMCP 4.0.x releases are excluded because 4.0.5 fixes strict argument validation that MESA relies on ([release notes](https://github.com/PrefectHQ/fastmcp/releases/tag/v4.0.5)).
+FastMCP **4.0.5** is supported on Python 3.12-3.14, alongside FastMCP 2.12+ and 3.x. Install `mesa-core[fastmcp,mcp]` to use both adapters in the same environment. FastMCP 4 uses MCP SDK v2; the raw SDK adapter supports both SDK v1 and v2. Earlier FastMCP 4.0.x releases are excluded because 4.0.5 fixes strict argument validation that MESA relies on ([release notes](https://github.com/PrefectHQ/fastmcp/releases/tag/v4.0.5)).
 
 For FastMCP 4 use `from fastmcp import FastMCP`. The SDK's `mcp.server.fastmcp` import exists only in SDK v1: retain `mcp<2` if using that older host API, or migrate the host to standalone FastMCP. Do not combine the SDK v1 pin with FastMCP 4.
 
@@ -108,7 +122,7 @@ if profile is not None:
 
 ## Status
 
-mesa-core v1.3.1 is ready for use: profile storage and five-level inheritance (including the device scope of MESA 1.1), enforcement with confirmation, temporal constraints including solar conditions, the MCP retrieval tools, privacy controls, the advisory lease protocol, and portable profile export/import are all implemented. Multi-agent lease preemption is planned for v2.
+mesa-core v1.3.2 is ready for use: profile storage and five-level inheritance (including the device scope of MESA 1.1), enforcement with confirmation, temporal constraints including solar conditions, the MCP retrieval tools, privacy controls, the advisory lease protocol, and portable profile export/import are all implemented. Multi-agent lease preemption is planned for v2.
 
 ```bash
 git clone https://github.com/leecaochang/mesa-core

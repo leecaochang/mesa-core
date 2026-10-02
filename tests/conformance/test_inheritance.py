@@ -332,18 +332,15 @@ def test_deployment_defaults_replace_baseline() -> None:
     effective = store.get_effective("media_player.kitchen")
     assert effective.operational_boundaries.control_mode == ControlMode.AUTONOMOUS
     # Domains without an override fall to the configured default, not the baseline.
-    assert (
-        store.get_effective("light.x").operational_boundaries.control_mode
-        == ControlMode.CONFIRM
-    )
+    assert store.get_effective("light.x").operational_boundaries.control_mode == ControlMode.CONFIRM
 
 
 def test_any_profile_beats_deployment_defaults() -> None:
     store = make_store()
-    store.set_deployment_defaults(
-        {"domain_overrides": {"light": {"control_mode": "autonomous"}}}
+    store.set_deployment_defaults({"domain_overrides": {"light": {"control_mode": "autonomous"}}})
+    store.set(
+        "light.locked", make_profile("light.locked", boundaries={"control_mode": "prohibited"})
     )
-    store.set("light.locked", make_profile("light.locked", boundaries={"control_mode": "prohibited"}))
     effective = store.get_effective("light.locked")
     assert effective.operational_boundaries.control_mode == ControlMode.PROHIBITED
 
@@ -354,10 +351,7 @@ def test_person_entities_default_to_sensitive() -> None:
     assert effective.privacy_classification.level == PrivacyLevel.SENSITIVE
     # Explicit classification still wins (and can only be more restrictive via Rule C).
     store.set("person.bob", make_profile("person.bob", privacy={"level": "restricted"}))
-    assert (
-        store.get_effective("person.bob").privacy_classification.level
-        == PrivacyLevel.RESTRICTED
-    )
+    assert store.get_effective("person.bob").privacy_classification.level == PrivacyLevel.RESTRICTED
 
 
 def test_explain_reports_baseline_provenance() -> None:
@@ -365,8 +359,7 @@ def test_explain_reports_baseline_provenance() -> None:
     resolver = InheritanceResolver(store=store)
     explanation = resolver.explain("lock.front")
     entry = next(
-        e for e in explanation.explanation
-        if e.field_path == "operational_boundaries.control_mode"
+        e for e in explanation.explanation if e.field_path == "operational_boundaries.control_mode"
     )
     assert entry.effective_value == "prohibited"
     assert entry.provided_by_level == "built_in_baseline"
@@ -385,15 +378,15 @@ def test_explain_to_dict_round_trip() -> None:
     assert payload["entity_id"] == "light.x"
     assert payload["conflicts_detected"] is True
     cm = next(
-        e for e in payload["explanation"]
+        e
+        for e in payload["explanation"]
         if e["field_path"] == "operational_boundaries.control_mode"
     )
     assert cm["effective_value"] == "confirm"
     assert cm["competing_values"] is not None
     hidden = explanation.to_dict(show_conflicts=False)
     cm2 = next(
-        e for e in hidden["explanation"]
-        if e["field_path"] == "operational_boundaries.control_mode"
+        e for e in hidden["explanation"] if e["field_path"] == "operational_boundaries.control_mode"
     )
     assert "competing_values" not in cm2
 

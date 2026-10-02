@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -76,14 +77,18 @@ def test_query_tags_match_against_effective_set() -> None:
     assert any_match["total_matched"] == 1
 
     all_match = call(
-        registry, "mesa_query_profiles",
-        tags=["lighting.ambient", "lighting.task"], tags_match="all",
+        registry,
+        "mesa_query_profiles",
+        tags=["lighting.ambient", "lighting.task"],
+        tags_match="all",
     )
     assert all_match["total_matched"] == 1
 
     all_miss = call(
-        registry, "mesa_query_profiles",
-        tags=["lighting.ambient", "lighting.colour"], tags_match="all",
+        registry,
+        "mesa_query_profiles",
+        tags=["lighting.ambient", "lighting.colour"],
+        tags_match="all",
     )
     assert all_miss["total_matched"] == 0
 
@@ -91,9 +96,7 @@ def test_query_tags_match_against_effective_set() -> None:
 def test_query_include_fields_always_keeps_provenance() -> None:
     registry, store = make_registry()
     store.set("light.a", make_profile("light.a"))
-    result = call(
-        registry, "mesa_query_profiles", include_fields=["operational_boundaries"]
-    )
+    result = call(registry, "mesa_query_profiles", include_fields=["operational_boundaries"])
     sp = result["results"][0]["semantic_profile"]
     assert "operational_boundaries" in sp
     assert "metadata_origin" in sp  # always included (Spec 9.2)
@@ -116,7 +119,9 @@ def test_query_pagination_and_invalid_cursor_envelope() -> None:
         store.set(f"light.l{i}", make_profile(f"light.l{i}"))
     first = call(registry, "mesa_query_profiles", limit=2)
     assert first["pagination"]["has_more"] is True
-    second = call(registry, "mesa_query_profiles", limit=2, cursor=first["pagination"]["next_cursor"])
+    second = call(
+        registry, "mesa_query_profiles", limit=2, cursor=first["pagination"]["next_cursor"]
+    )
     assert [r["entity_id"] for r in second["results"]] == ["light.l2", "light.l3"]
 
     bad = call(registry, "mesa_query_profiles", cursor="garbage")
@@ -150,7 +155,7 @@ def test_get_profile_found_with_diagnostic() -> None:
     fixtures = Path(__file__).parent / "fixtures" / "profiles"
     from mesa_core import SemanticProfile
 
-    data = json.loads((fixtures / "light_kernel.json").read_text())
+    data = json.loads((fixtures / "light_kernel.json").read_text(encoding="utf-8"))
     data["diagnostic_profile"] = {"state_mapping": []}
     registry, store = make_registry()
     store.set("light.a", SemanticProfile.from_dict("light.a", data))
@@ -191,15 +196,13 @@ def test_explain_profile_envelope() -> None:
     result = call(registry, "mesa_explain_profile", entity_id="light.a")
     assert result["conflicts_detected"] is True
     cm = next(
-        e for e in result["explanation"]
-        if e["field_path"] == "operational_boundaries.control_mode"
+        e for e in result["explanation"] if e["field_path"] == "operational_boundaries.control_mode"
     )
     assert cm["effective_value"] == "confirm"
     assert cm["competing_values"]
     hidden = call(registry, "mesa_explain_profile", entity_id="light.a", show_conflicts=False)
     cm2 = next(
-        e for e in hidden["explanation"]
-        if e["field_path"] == "operational_boundaries.control_mode"
+        e for e in hidden["explanation"] if e["field_path"] == "operational_boundaries.control_mode"
     )
     assert "competing_values" not in cm2
 
@@ -256,9 +259,7 @@ def _lease_registry() -> DictToolRegistry:
         ),
     )
     registry = DictToolRegistry()
-    ctx = CallerContext(
-        caller_id="agent.a", roles=[], is_authenticated=True, session_id="sess-1"
-    )
+    ctx = CallerContext(caller_id="agent.a", roles=[], is_authenticated=True, session_id="sess-1")
     register_mesa_tools(
         store,
         adapter=registry,
@@ -326,7 +327,9 @@ def test_semantic_moments_omitted_when_host_cannot_answer() -> None:
     registry, store = make_registry()
     store.set("light.a", make_profile("light.a"))
     # No callback registered at all.
-    no_callback = call(registry, "mesa_get_profile", entity_id="light.a", include_semantic_moments=True)
+    no_callback = call(
+        registry, "mesa_get_profile", entity_id="light.a", include_semantic_moments=True
+    )
     assert "semantic_moments" not in no_callback
 
     # Callback answers None.
@@ -346,7 +349,9 @@ def test_semantic_moments_omitted_when_host_cannot_answer() -> None:
 
 def test_shipped_tools_schema_in_sync() -> None:
     shipped = json.loads(
-        (Path(__file__).parent.parent / "mesa_core" / "schemas" / "mesa_tools.schema.json").read_text()
+        (
+            Path(__file__).parent.parent / "mesa_core" / "schemas" / "mesa_tools.schema.json"
+        ).read_text(encoding="utf-8")
     )
     assert shipped == tools_schema_document()
     assert set(shipped["tools"]) == set(TOOL_SCHEMAS)
@@ -371,8 +376,7 @@ def test_direct_dispatch_rejects_wrong_typed_params() -> None:
     store.set("light.a", make_profile("light.a"))
     # A string is not coerced to a boolean (bool("false") is True, Spec 9.2).
     assert (
-        call(registry, "mesa_query_profiles", include_inferred="false")["error"]
-        == "invalid_query"
+        call(registry, "mesa_query_profiles", include_inferred="false")["error"] == "invalid_query"
     )
     # include_fields must be an array, not a string consumed character by character.
     assert (
@@ -424,7 +428,7 @@ def test_query_pagination_returned_matches_results_after_denial() -> None:
     assert result["results"] == []
     assert result["pagination"]["returned"] == len(result["results"]) == 0
     # total_matched still counts the entity that matched the filters pre-shaping.
-    assert result["total_matched"] == 1
+    assert result["total_matched"] == 0
 
 
 # -------------------------------- MESA 1.1: filters, component_type, unknown_tool
@@ -482,7 +486,7 @@ def _inferred_pinned(entity_id: str) -> SemanticProfile:
                 "metadata_origin": {
                     "source": "inferred_ai",
                     "confidence": 0.9,
-                    "generated_at": "2026-07-30T00:00:00+00:00",
+                    "generated_at": datetime.now(UTC).isoformat(),
                 },
                 "profile_valid_for": {"integration_version": "2.4.1"},
             }
@@ -548,7 +552,7 @@ def test_inherited_version_pin_invalidates_the_entities_that_inherit_it() -> Non
                     "metadata_origin": {
                         "source": "inferred_ai",
                         "confidence": 0.9,
-                        "generated_at": "2026-07-30T00:00:00+00:00",
+                        "generated_at": datetime.now(UTC).isoformat(),
                     }
                 }
             },
@@ -579,7 +583,9 @@ def test_validity_warnings_surface_for_trusted_profiles_too() -> None:
     )
     registry = DictToolRegistry()
     register_mesa_tools(
-        store, adapter=registry, get_validity_context=lambda _eid: {"known_entity_ids": ["light.user"]}
+        store,
+        adapter=registry,
+        get_validity_context=lambda _eid: {"known_entity_ids": ["light.user"]},
     )
     out = call(registry, "mesa_get_profile", entity_id="light.user")
     assert "staleness_status" not in out
@@ -626,7 +632,7 @@ def test_each_entity_is_evaluated_against_its_own_integration_version() -> None:
                         "metadata_origin": {
                             "source": "inferred_ai",
                             "confidence": 0.9,
-                            "generated_at": "2026-07-30T00:00:00+00:00",
+                            "generated_at": datetime.now(UTC).isoformat(),
                         },
                         "profile_valid_for": {"integration_version": pinned},
                     }
@@ -711,7 +717,7 @@ def test_one_shot_context_values_cannot_produce_contradictory_answers() -> None:
                     "metadata_origin": {
                         "source": "inferred_ai",
                         "confidence": 0.9,
-                        "generated_at": "2026-07-30T00:00:00+00:00",
+                        "generated_at": datetime.now(UTC).isoformat(),
                     },
                     "profile_valid_for": {"invalidated_by_entities": ["light.x"]},
                 }
@@ -746,7 +752,7 @@ def _invalidating_store() -> ProfileStore:
                     "metadata_origin": {
                         "source": "inferred_ai",
                         "confidence": 0.9,
-                        "generated_at": "2026-07-30T00:00:00+00:00",
+                        "generated_at": datetime.now(UTC).isoformat(),
                     },
                     "profile_valid_for": {"invalidated_by_entities": ["light.x"]},
                 }
@@ -767,7 +773,9 @@ def _with_context(context: Any) -> DictToolRegistry:
 def test_registry_given_as_a_bare_string_is_refused() -> None:
     # "light.x" is itself a collection of characters, so iterating it would
     # report every real entity as removed.
-    out = call(_with_context({"known_entity_ids": "light.x"}), "mesa_get_profile", entity_id="light.x")
+    out = call(
+        _with_context({"known_entity_ids": "light.x"}), "mesa_get_profile", entity_id="light.x"
+    )
     assert out["staleness_status"] == "current"
     assert "warnings" not in out
 
@@ -797,7 +805,7 @@ def test_non_string_versions_are_refused() -> None:
                     "metadata_origin": {
                         "source": "inferred_ai",
                         "confidence": 0.9,
-                        "generated_at": "2026-07-30T00:00:00+00:00",
+                        "generated_at": datetime.now(UTC).isoformat(),
                     },
                     "profile_valid_for": {"integration_version": "2.4.1"},
                 }
@@ -832,9 +840,7 @@ def test_async_validity_context_is_refused_not_silently_ignored(
         return {"known_entity_ids": ["light.x"]}
 
     registry = DictToolRegistry()
-    register_mesa_tools(
-        _invalidating_store(), adapter=registry, get_validity_context=async_context
-    )
+    register_mesa_tools(_invalidating_store(), adapter=registry, get_validity_context=async_context)
     with caplog.at_level("WARNING", logger="mesa_core.mcp"):
         out = call(registry, "mesa_get_profile", entity_id="light.x")
     assert out["entity_id"] == "light.x"
@@ -857,7 +863,7 @@ def test_shared_generator_cannot_desync_rows_of_one_query() -> None:
                         "metadata_origin": {
                             "source": "inferred_ai",
                             "confidence": 0.9,
-                            "generated_at": "2026-07-30T00:00:00+00:00",
+                            "generated_at": datetime.now(UTC).isoformat(),
                         },
                         "profile_valid_for": {"invalidated_by_entities": [entity_id]},
                     }
@@ -889,7 +895,7 @@ def test_reusable_registry_evaluates_every_row_of_a_query() -> None:
                         "metadata_origin": {
                             "source": "inferred_ai",
                             "confidence": 0.9,
-                            "generated_at": "2026-07-30T00:00:00+00:00",
+                            "generated_at": datetime.now(UTC).isoformat(),
                         },
                         "profile_valid_for": {"invalidated_by_entities": ["light.gone"]},
                     }

@@ -61,7 +61,8 @@ def test_unevaluable_anchor_warns_instead_of_silence() -> None:
     warnings = p.validity_warnings(now=NOW)
     assert len(warnings) == 1 and "cannot be evaluated" in warnings[0]
 
-    garbled = profile({"review_after_days": 30}, last_updated="yesterday-ish")
+    garbled = profile({"review_after_days": 30})
+    garbled.metadata.last_updated = "yesterday-ish"
     warnings = garbled.validity_warnings(now=NOW)
     assert len(warnings) == 1 and "cannot be evaluated" in warnings[0]
 
@@ -173,7 +174,7 @@ def test_fired_trigger_outranks_unknown_age() -> None:
             "metadata_origin": {
                 "source": "inferred_ai",
                 "confidence": 0.9,
-                "generated_at": "sometime last spring",
+                "generated_at": "2099-01-01T00:00:00+00:00",
             },
             "last_updated": "2026-01-01T00:00:00+00:00",
             "profile_valid_for": {"review_after_days": 30},

@@ -26,12 +26,13 @@ cd mesa-core
 pip install -e ".[dev]"
 ```
 
-CI runs three gates on every push and pull request, across Python 3.12 through 3.14. Run them locally before you push:
+CI runs lint, formatting, type, test and package gates on every push and pull request, and weekly, across Python 3.12 through 3.14. Run them locally before you push:
 
 ```bash
 ruff check .       # lint and import order
+ruff format --check .  # formatting
 mypy               # strict type checking
-pytest tests/ -v   # conformance suite
+pytest tests/ -v   # conformance suite, bounded by pytest-timeout
 ```
 
 A change that touches resolution, enforcement, or validation should come with a conformance test under `tests/conformance/` that pins the behaviour, in the style of the existing tests.

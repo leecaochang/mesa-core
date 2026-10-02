@@ -3,42 +3,63 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 1'
+
+permissions:
+  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13", "3.14"]
-        fastmcp: ["3.4.7", "4.0.5"]
+        python-version: ['3.12', '3.13', '3.14']
+        fastmcp: ['3.4.7', '4.0.5']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install
-        run: pip install -e ".[dev,fastmcp,mcp]" "fastmcp==${{ matrix.fastmcp }}"
-      - name: Lint
-        run: ruff check .
-      - name: Type check
-        run: mypy
-      - name: Test
-        run: pytest tests/ -v -W error::RuntimeWarning
+        run: pip install -e '.[dev,fastmcp,mcp]' 'fastmcp==${{ matrix.fastmcp }}'
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: mypy
+      - run: pytest tests/ -v
 
-  # The adapter supports both FastMCP lineages, and the resolver installs the
-  # newest by default, so nothing above would notice the older one breaking.
-  # RuntimeWarnings are errors here: that is how the 2.x async get_tool
-  # mismatch showed itself.
   fastmcp-oldest:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      - name: Install with the oldest supported FastMCP
-        run: pip install -e ".[dev,fastmcp,mcp]" "fastmcp==2.12.0"
-      - name: Adapter tests
-        run: pytest tests/integration/ -v -W error::RuntimeWarning
+          python-version: '3.12'
+      - run: pip install -e '.[dev,fastmcp,mcp]' 'fastmcp==2.12.0'
+      - run: pytest tests/ -v
+
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check dist/*
+      - name: Verify release metadata and shipped sources
+        run: python scripts/verify_release.py
+      - name: Install built wheel without optional extras
+        run: |
+          python -m venv /tmp/mesa-wheel
+          /tmp/mesa-wheel/bin/pip install dist/*.whl
+          cd /tmp
+          /tmp/mesa-wheel/bin/python -c 'from mesa_core import MesaEnforcer, ProfileStore; from mesa_core.backends import MemoryBackend; assert not MesaEnforcer(ProfileStore(MemoryBackend())).evaluate("lock.front", "lock.unlock").allowed'

@@ -1,6 +1,5 @@
 # MESA Enrichment Specification
-**Version:** 1.1
-**Document Type:** Formal Schema Reference (companion to the MESA Specification)
+**Version:** 1.1 **Document Type:** Formal Schema Reference (companion to the MESA Specification)
 
 ---
 
@@ -358,7 +357,7 @@ Privacy classification is REQUIRED for all person entities.
 
 ## 19. Dashboard and UI Semantics
 
-**Status: schema definition only. Not queryable via the retrieval API in v1.0.**
+**Status: schema definition only. Not queryable via the retrieval API in v1.1.**
 
 Home Assistant Lovelace cards have no stable unique identifiers. Cards are referenced internally by positional index within their view, and these indices shift on every insert or delete operation. The HA card config type accepts arbitrary fields (`[key: string]: any`), so a custom `mesa_card_id` would survive storage round-trips, but the built-in visual card editor may strip unrecognised fields on re-save, silently breaking the profile link. Until HA provides native stable card identifiers, dashboard card profiles cannot be reliably keyed, stored, or queried. The schema below is defined for forward compatibility and MAY be used by custom tooling that manages its own card identification, but `dashboard_card` is not a valid `component_type` in retrieval API responses.
 

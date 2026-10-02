@@ -34,7 +34,9 @@ def audit_events(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
 
 def caller() -> CallerContext:
     return CallerContext(
-        caller_id="user.alice", roles=["primary_resident"], is_authenticated=True,
+        caller_id="user.alice",
+        roles=["primary_resident"],
+        is_authenticated=True,
         session_id="sess-1",
     )
 

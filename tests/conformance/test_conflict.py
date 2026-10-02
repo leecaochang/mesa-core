@@ -46,7 +46,10 @@ def test_rule_a_most_restrictive_wins() -> None:
     effective, res = resolve(
         "light.x",
         Layer("entity", make_profile("light.x", boundaries={"control_mode": "autonomous"})),
-        Layer("domain", make_profile("light", origin="developer", boundaries={"control_mode": "confirm"})),
+        Layer(
+            "domain",
+            make_profile("light", origin="developer", boundaries={"control_mode": "confirm"}),
+        ),
     )
     assert effective.operational_boundaries.control_mode == ControlMode.CONFIRM
     assert res.conflicts_detected
@@ -55,8 +58,16 @@ def test_rule_a_most_restrictive_wins() -> None:
 def test_rule_a_inferred_prohibited_preserved_against_developer_autonomous() -> None:
     effective, _ = resolve(
         "light.x",
-        Layer("entity", make_profile("light.x", origin="inferred_ai", boundaries={"control_mode": "prohibited"})),
-        Layer("domain", make_profile("light", origin="developer", boundaries={"control_mode": "autonomous"})),
+        Layer(
+            "entity",
+            make_profile(
+                "light.x", origin="inferred_ai", boundaries={"control_mode": "prohibited"}
+            ),
+        ),
+        Layer(
+            "domain",
+            make_profile("light", origin="developer", boundaries={"control_mode": "autonomous"}),
+        ),
     )
     assert effective.operational_boundaries.control_mode == ControlMode.PROHIBITED
 
@@ -65,7 +76,10 @@ def test_rule_a_read_only_wins_tie_with_prohibited() -> None:
     effective, _ = resolve(
         "sensor.x",
         Layer("entity", make_profile("sensor.x", boundaries={"control_mode": "prohibited"})),
-        Layer("domain", make_profile("sensor", origin="developer", boundaries={"control_mode": "read_only"})),
+        Layer(
+            "domain",
+            make_profile("sensor", origin="developer", boundaries={"control_mode": "read_only"}),
+        ),
     )
     assert effective.operational_boundaries.control_mode == ControlMode.READ_ONLY
 
@@ -83,7 +97,12 @@ def test_rule_a_exception_valid_loosening_override() -> None:
     effective, res = resolve(
         "media_player.x",
         Layer("entity", override),
-        Layer("domain", make_profile("media_player", origin="developer", boundaries={"control_mode": "confirm"})),
+        Layer(
+            "domain",
+            make_profile(
+                "media_player", origin="developer", boundaries={"control_mode": "confirm"}
+            ),
+        ),
     )
     assert effective.operational_boundaries.control_mode == ControlMode.AUTONOMOUS
     entry = next(
@@ -100,7 +119,12 @@ def test_rule_a_override_rejected_without_control_reason() -> None:
     effective, res = resolve(
         "media_player.x",
         Layer("entity", override),
-        Layer("domain", make_profile("media_player", origin="developer", boundaries={"control_mode": "confirm"})),
+        Layer(
+            "domain",
+            make_profile(
+                "media_player", origin="developer", boundaries={"control_mode": "confirm"}
+            ),
+        ),
     )
     assert effective.operational_boundaries.control_mode == ControlMode.CONFIRM
     assert any("malformed" in w for w in res.warnings)
@@ -120,7 +144,12 @@ def test_rule_a_override_rejected_from_non_user_origin() -> None:
     effective, _ = resolve(
         "media_player.x",
         Layer("entity", override),
-        Layer("domain", make_profile("media_player", origin="developer", boundaries={"control_mode": "confirm"})),
+        Layer(
+            "domain",
+            make_profile(
+                "media_player", origin="developer", boundaries={"control_mode": "confirm"}
+            ),
+        ),
     )
     assert effective.operational_boundaries.control_mode == ControlMode.CONFIRM
 
@@ -137,7 +166,10 @@ def test_rule_a_override_cannot_loosen_prohibited() -> None:
     effective, res = resolve(
         "lock.x",
         Layer("entity", override),
-        Layer("domain", make_profile("lock", origin="developer", boundaries={"control_mode": "prohibited"})),
+        Layer(
+            "domain",
+            make_profile("lock", origin="developer", boundaries={"control_mode": "prohibited"}),
+        ),
     )
     assert effective.operational_boundaries.control_mode == ControlMode.PROHIBITED
     assert any("cannot loosen" in w for w in res.warnings)
@@ -146,7 +178,12 @@ def test_rule_a_override_cannot_loosen_prohibited() -> None:
 def test_rule_a_unconfirmed_inferred_autonomous_read_as_confirm() -> None:
     effective, res = resolve(
         "light.x",
-        Layer("entity", make_profile("light.x", origin="inferred_ai", boundaries={"control_mode": "autonomous"})),
+        Layer(
+            "entity",
+            make_profile(
+                "light.x", origin="inferred_ai", boundaries={"control_mode": "autonomous"}
+            ),
+        ),
     )
     assert effective.operational_boundaries.control_mode == ControlMode.CONFIRM
     assert any("Rule 8" in w for w in res.warnings)
@@ -158,8 +195,15 @@ def test_rule_a_unconfirmed_inferred_autonomous_read_as_confirm() -> None:
 def test_rule_b_likely_sticky_upward() -> None:
     effective, _ = resolve(
         "input_boolean.x",
-        Layer("entity", make_profile("input_boolean.x", boundaries={"triggers_automations": "none"})),
-        Layer("domain", make_profile("input_boolean", origin="developer", boundaries={"triggers_automations": "likely"})),
+        Layer(
+            "entity", make_profile("input_boolean.x", boundaries={"triggers_automations": "none"})
+        ),
+        Layer(
+            "domain",
+            make_profile(
+                "input_boolean", origin="developer", boundaries={"triggers_automations": "likely"}
+            ),
+        ),
     )
     assert effective.operational_boundaries.triggers_automations == TriggersAutomations.LIKELY
 
@@ -176,7 +220,12 @@ def test_rule_b_entity_override_with_human_reason() -> None:
     effective, _ = resolve(
         "input_boolean.x",
         Layer("entity", override),
-        Layer("domain", make_profile("input_boolean", origin="developer", boundaries={"triggers_automations": "likely"})),
+        Layer(
+            "domain",
+            make_profile(
+                "input_boolean", origin="developer", boundaries={"triggers_automations": "likely"}
+            ),
+        ),
     )
     assert effective.operational_boundaries.triggers_automations == TriggersAutomations.NONE
 
@@ -189,7 +238,12 @@ def test_rule_b_override_rejected_without_human_reason() -> None:
     effective, res = resolve(
         "input_boolean.x",
         Layer("entity", override),
-        Layer("domain", make_profile("input_boolean", origin="developer", boundaries={"triggers_automations": "likely"})),
+        Layer(
+            "domain",
+            make_profile(
+                "input_boolean", origin="developer", boundaries={"triggers_automations": "likely"}
+            ),
+        ),
     )
     assert effective.operational_boundaries.triggers_automations == TriggersAutomations.LIKELY
     assert any("malformed" in w for w in res.warnings)
@@ -218,7 +272,12 @@ def test_rule_b_deployment_defined_override() -> None:
 def test_rule_b_inferred_helper_none_read_as_likely() -> None:
     effective, res = resolve(
         "input_boolean.x",
-        Layer("entity", make_profile("input_boolean.x", origin="inferred_ai", boundaries={"triggers_automations": "none"})),
+        Layer(
+            "entity",
+            make_profile(
+                "input_boolean.x", origin="inferred_ai", boundaries={"triggers_automations": "none"}
+            ),
+        ),
     )
     assert effective.operational_boundaries.triggers_automations == TriggersAutomations.LIKELY
     assert any("Rule 9" in w for w in res.warnings)
@@ -231,7 +290,9 @@ def test_rule_c_most_restrictive_privacy_wins() -> None:
     effective, res = resolve(
         "camera.x",
         Layer("entity", make_profile("camera.x", privacy={"level": "normal"})),
-        Layer("domain", make_profile("camera", origin="inferred_ai", privacy={"level": "restricted"})),
+        Layer(
+            "domain", make_profile("camera", origin="inferred_ai", privacy={"level": "restricted"})
+        ),
     )
     assert effective.privacy_classification.level == PrivacyLevel.RESTRICTED
     assert res.conflicts_detected
@@ -261,8 +322,14 @@ def test_rule_c_single_declaration_no_conflict() -> None:
 def test_rule_d_user_entity_overrides_developer_domain() -> None:
     effective, _ = resolve(
         "vacuum.x",
-        Layer("entity", make_profile("vacuum.x", origin="user", boundaries={"reversibility_cost": "high"})),
-        Layer("domain", make_profile("vacuum", origin="developer", boundaries={"reversibility_cost": "none"})),
+        Layer(
+            "entity",
+            make_profile("vacuum.x", origin="user", boundaries={"reversibility_cost": "high"}),
+        ),
+        Layer(
+            "domain",
+            make_profile("vacuum", origin="developer", boundaries={"reversibility_cost": "none"}),
+        ),
     )
     assert effective.operational_boundaries.reversibility_cost == "high"
 
@@ -270,8 +337,16 @@ def test_rule_d_user_entity_overrides_developer_domain() -> None:
 def test_rule_d_inferred_entity_never_overrides_developer_domain() -> None:
     effective, res = resolve(
         "vacuum.x",
-        Layer("entity", make_profile("vacuum.x", origin="inferred_ai", boundaries={"reversibility_cost": "high"})),
-        Layer("domain", make_profile("vacuum", origin="developer", boundaries={"reversibility_cost": "none"})),
+        Layer(
+            "entity",
+            make_profile(
+                "vacuum.x", origin="inferred_ai", boundaries={"reversibility_cost": "high"}
+            ),
+        ),
+        Layer(
+            "domain",
+            make_profile("vacuum", origin="developer", boundaries={"reversibility_cost": "none"}),
+        ),
     )
     assert effective.operational_boundaries.reversibility_cost == "none"
     entry = next(
@@ -283,8 +358,14 @@ def test_rule_d_inferred_entity_never_overrides_developer_domain() -> None:
 def test_rule_d_lower_tier_resolution_when_no_trusted_declaration() -> None:
     effective, _ = resolve(
         "sensor.x",
-        Layer("entity", make_profile("sensor.x", origin="inferred_ai", boundaries={"state_volatility": "high"})),
-        Layer("domain", make_profile("sensor", origin="unknown", boundaries={"state_volatility": "low"})),
+        Layer(
+            "entity",
+            make_profile("sensor.x", origin="inferred_ai", boundaries={"state_volatility": "high"}),
+        ),
+        Layer(
+            "domain",
+            make_profile("sensor", origin="unknown", boundaries={"state_volatility": "low"}),
+        ),
     )
     assert effective.operational_boundaries.state_volatility == "high"
 
@@ -293,8 +374,18 @@ def test_rule_d_origin_authority_breaks_equal_scope_tie() -> None:
     # Two domain-level declarations: developer beats user at equal scope.
     effective, _ = resolve(
         "light.x",
-        Layer("domain", make_profile("light", origin="user", boundaries={"side_effect_scope": "room_localized"})),
-        Layer("domain", make_profile("light", origin="developer", boundaries={"side_effect_scope": "entity_only"})),
+        Layer(
+            "domain",
+            make_profile(
+                "light", origin="user", boundaries={"side_effect_scope": "room_localized"}
+            ),
+        ),
+        Layer(
+            "domain",
+            make_profile(
+                "light", origin="developer", boundaries={"side_effect_scope": "entity_only"}
+            ),
+        ),
     )
     assert effective.operational_boundaries.side_effect_scope == "entity_only"
 
@@ -307,8 +398,14 @@ def test_rule_d_device_scope_beats_area_integration_domain() -> None:
         "sensor.x",
         Layer("device", make_profile("abc123", boundaries={"reversibility_cost": "high"})),
         Layer("area", make_profile("area.hall", boundaries={"reversibility_cost": "moderate"})),
-        Layer("integration", make_profile("hue", origin="developer", boundaries={"reversibility_cost": "trivial"})),
-        Layer("domain", make_profile("sensor", origin="developer", boundaries={"reversibility_cost": "none"})),
+        Layer(
+            "integration",
+            make_profile("hue", origin="developer", boundaries={"reversibility_cost": "trivial"}),
+        ),
+        Layer(
+            "domain",
+            make_profile("sensor", origin="developer", boundaries={"reversibility_cost": "none"}),
+        ),
     )
     assert effective.operational_boundaries.reversibility_cost == "high"
     entry = next(
@@ -330,7 +427,10 @@ def test_rule_a_device_scope_tightens_freely() -> None:
     effective, _ = resolve(
         "light.strip",
         Layer("device", make_profile("abc123", boundaries={"control_mode": "confirm"})),
-        Layer("integration", make_profile("hue", origin="developer", boundaries={"control_mode": "autonomous"})),
+        Layer(
+            "integration",
+            make_profile("hue", origin="developer", boundaries={"control_mode": "autonomous"}),
+        ),
     )
     assert effective.operational_boundaries.control_mode == ControlMode.CONFIRM
 
@@ -350,7 +450,12 @@ def test_rule_a_override_rejected_at_device_scope() -> None:
     effective, res = resolve(
         "media_player.x",
         Layer("device", override),
-        Layer("domain", make_profile("media_player", origin="developer", boundaries={"control_mode": "confirm"})),
+        Layer(
+            "domain",
+            make_profile(
+                "media_player", origin="developer", boundaries={"control_mode": "confirm"}
+            ),
+        ),
     )
     assert effective.operational_boundaries.control_mode == ControlMode.CONFIRM
     assert any("override_control_mode is malformed" in w for w in res.warnings)
@@ -369,7 +474,12 @@ def test_rule_b_override_rejected_at_device_scope() -> None:
     effective, res = resolve(
         "input_boolean.flag",
         Layer("device", override),
-        Layer("domain", make_profile("input_boolean", origin="developer", boundaries={"triggers_automations": "likely"})),
+        Layer(
+            "domain",
+            make_profile(
+                "input_boolean", origin="developer", boundaries={"triggers_automations": "likely"}
+            ),
+        ),
     )
     assert effective.operational_boundaries.triggers_automations == TriggersAutomations.LIKELY
     assert any("override_triggers_automations is malformed" in w for w in res.warnings)
@@ -400,7 +510,10 @@ def test_capability_hint_contributes_when_boundaries_silent() -> None:
     effective, res = resolve(
         "light.x",
         Layer("integration", make_capability_profile("hue", "confirm")),
-        Layer("domain", make_profile("light", origin="developer", boundaries={"control_mode": "autonomous"})),
+        Layer(
+            "domain",
+            make_profile("light", origin="developer", boundaries={"control_mode": "autonomous"}),
+        ),
     )
     assert effective.operational_boundaries.control_mode == ControlMode.CONFIRM
     entry = next(
@@ -415,7 +528,10 @@ def test_capability_hint_inert_when_boundaries_declare() -> None:
     # contribution; the hint asserts nothing alongside it.
     effective, res = resolve(
         "light.x",
-        Layer("integration", make_capability_profile("hue", "prohibited", boundaries={"control_mode": "confirm"})),
+        Layer(
+            "integration",
+            make_capability_profile("hue", "prohibited", boundaries={"control_mode": "confirm"}),
+        ),
     )
     assert effective.operational_boundaries.control_mode == ControlMode.CONFIRM
     assert not any("capability" in w for w in res.warnings)
@@ -435,7 +551,10 @@ def test_capability_hint_ignored_outside_integration_scope() -> None:
     effective, _ = resolve(
         "light.x",
         Layer("entity", make_capability_profile("light.x", "prohibited")),
-        Layer("domain", make_profile("light", origin="developer", boundaries={"control_mode": "autonomous"})),
+        Layer(
+            "domain",
+            make_profile("light", origin="developer", boundaries={"control_mode": "autonomous"}),
+        ),
     )
     assert effective.operational_boundaries.control_mode == ControlMode.AUTONOMOUS
 
@@ -461,7 +580,10 @@ def test_capability_hint_malformed_value_ignored_with_warning() -> None:
     effective, res = resolve(
         "light.x",
         Layer("integration", profile),
-        Layer("domain", make_profile("light", origin="developer", boundaries={"control_mode": "autonomous"})),
+        Layer(
+            "domain",
+            make_profile("light", origin="developer", boundaries={"control_mode": "autonomous"}),
+        ),
     )
     assert effective.operational_boundaries.control_mode == ControlMode.AUTONOMOUS
     assert any("capability hint ignored" in w for w in res.warnings)
@@ -483,7 +605,10 @@ def test_rule_e_absence_is_inherited_not_defaulted() -> None:
     effective, _ = resolve(
         "light.x",
         Layer("entity", make_profile("light.x", boundaries={"control_mode": "confirm"})),
-        Layer("domain", make_profile("light", origin="developer", boundaries={"reversibility_cost": "trivial"})),
+        Layer(
+            "domain",
+            make_profile("light", origin="developer", boundaries={"reversibility_cost": "trivial"}),
+        ),
     )
     # reversibility_cost comes from the domain layer; absence at entity level is not a conflict.
     assert effective.operational_boundaries.reversibility_cost == "trivial"
@@ -515,9 +640,7 @@ def _limit_ids(profile: SemanticProfile) -> set[str]:
 
 def _limit_by_id(profile: SemanticProfile, limit_id: str) -> dict[str, Any]:
     return next(
-        entry
-        for entry in profile.operational_boundaries.declared_limits
-        if entry["id"] == limit_id
+        entry for entry in profile.operational_boundaries.declared_limits if entry["id"] == limit_id
     )
 
 
@@ -530,7 +653,9 @@ def test_declared_limits_union_distinct_ids_across_layers() -> None:
             "entity",
             make_profile(
                 "media_player.kitchen",
-                boundaries={"declared_limits": [_limit("source_allowlist", permitted_values=["aux"])]},
+                boundaries={
+                    "declared_limits": [_limit("source_allowlist", permitted_values=["aux"])]
+                },
             ),
         ),
         Layer(
@@ -651,7 +776,10 @@ def test_effective_tags_are_union_across_levels() -> None:
     effective, _ = resolve(
         "light.x",
         Layer("entity", make_profile("light.x", tags=["lighting.task"])),
-        Layer("domain", make_profile("light", origin="developer", tags=["lighting.ambient", "lighting.task"])),
+        Layer(
+            "domain",
+            make_profile("light", origin="developer", tags=["lighting.ambient", "lighting.task"]),
+        ),
     )
     assert set(effective.semantic_tags) == {"lighting.task", "lighting.ambient"}
 
@@ -697,13 +825,13 @@ def test_person_traits_inherited_from_domain_layer() -> None:
     assert effective.person_traits.household_role == "child"
 
 
-def test_person_traits_entity_scope_beats_domain() -> None:
+def test_minor_restriction_cannot_be_cleared_by_entity_scope() -> None:
     effective, res = resolve(
         "person.teen",
         Layer("entity", person_profile("person.teen", is_minor=False)),
         Layer("domain", person_profile("person", is_minor=True)),
     )
-    assert effective.person_traits.is_minor is False
+    assert effective.person_traits.is_minor is True
     assert res.conflicts_detected
 
 

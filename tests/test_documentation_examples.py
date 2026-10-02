@@ -38,7 +38,7 @@ def _blocks() -> list[tuple[str, int, str, Any]]:
     """(document, block number, language, parsed body) for every fenced block."""
     found: list[tuple[str, int, str, Any]] = []
     for path in DOCUMENTS:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         for index, match in enumerate(_FENCE.finditer(text), start=1):
             language, body = match.group(1), match.group(2)
             # Illustrative fragments use ... placeholders and elisions that no

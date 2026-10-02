@@ -1,6 +1,5 @@
 # MESA Specification
-**Version:** 1.1.0
-**Document Type:** Formal Schema Reference
+**Version:** 1.1.0 **Document Type:** Formal Schema Reference
 
 ---
 
@@ -23,36 +22,15 @@ For practical implementation guidance, worked examples, and AI-assisted authorin
 3. [Security Considerations](#3-security-considerations)
 4. [The MESA Core Kernel](#4-the-mesa-core-kernel)
 5. [Global Profile Metadata](#5-global-profile-metadata)
-   - 5.1 [Root Object](#51-root-object)
-   - 5.2 [Profile Metadata Schema](#52-profile-metadata-schema)
-   - 5.3 [Metadata Origin Schema](#53-metadata-origin-schema)
-   - 5.4 [Inferred AI Profile Rules](#54-inferred-ai-profile-rules)
-   - 5.5 [Profile Freshness and Invalidation](#55-profile-freshness-and-invalidation)
-   - 5.6 [Profile Inheritance](#56-profile-inheritance)
-   - 5.7 [Global Profile Conflict Resolution](#57-global-profile-conflict-resolution)
-   - 5.8 [Deployment Defaults for Unprofiled Entities](#58-deployment-defaults-for-unprofiled-entities)
+- 5.1 [Root Object](#51-root-object) - 5.2 [Profile Metadata Schema](#52-profile-metadata-schema) - 5.3 [Metadata Origin Schema](#53-metadata-origin-schema) - 5.4 [Inferred AI Profile Rules](#54-inferred-ai-profile-rules) - 5.5 [Profile Freshness and Invalidation](#55-profile-freshness-and-invalidation) - 5.6 [Profile Inheritance](#56-profile-inheritance) - 5.7 [Global Profile Conflict Resolution](#57-global-profile-conflict-resolution) - 5.8 [Deployment Defaults for Unprofiled Entities](#58-deployment-defaults-for-unprofiled-entities)
 6. [Operational Boundaries](#6-operational-boundaries)
-   - 6.1 [Boundary Schema](#61-boundary-schema)
-   - 6.2 [Side Effect Scope](#62-side-effect-scope)
-   - 6.3 [Predicate Operators](#63-predicate-operators)
-   - 6.4 [Declared Limits Schema](#64-declared-limits-schema)
-   - 6.5 [Temporal Constraints Schema](#65-temporal-constraints-schema)
-   - 6.6 [Confirmation Protocol](#66-confirmation-protocol)
+- 6.1 [Boundary Schema](#61-boundary-schema) - 6.2 [Side Effect Scope](#62-side-effect-scope) - 6.3 [Predicate Operators](#63-predicate-operators) - 6.4 [Declared Limits Schema](#64-declared-limits-schema) - 6.5 [Temporal Constraints Schema](#65-temporal-constraints-schema) - 6.6 [Confirmation Protocol](#66-confirmation-protocol)
 7. [Privacy and Sensitivity Classification](#7-privacy-and-sensitivity-classification)
-   - 7.1 [Privacy Classification Schema](#71-privacy-classification-schema)
-   - 7.2 [Role-Based Access](#72-role-based-access)
+- 7.1 [Privacy Classification Schema](#71-privacy-classification-schema) - 7.2 [Role-Based Access](#72-role-based-access)
 8. [Integration Semantics](#8-integration-semantics)
-   - 8.1 [Category Traits](#81-category-traits)
-   - 8.2 [Capability Semantics](#82-capability-semantics)
-   - 8.3 [Semantic Routing](#83-semantic-routing)
-   - 8.4 [Complete Integration Profile Example](#84-complete-integration-profile-example)
+- 8.1 [Category Traits](#81-category-traits) - 8.2 [Capability Semantics](#82-capability-semantics) - 8.3 [Semantic Routing](#83-semantic-routing) - 8.4 [Complete Integration Profile Example](#84-complete-integration-profile-example)
 9. [Semantic Retrieval API](#9-semantic-retrieval-api)
-   - 9.1 [Overview](#91-overview)
-   - 9.2 [Query Request Schema](#92-query-request-schema)
-   - 9.3 [Query Response Schema](#93-query-response-schema)
-   - 9.4 [Caller Context Schema](#94-caller-context-schema)
-   - 9.5 [MCP Tool Definitions](#95-mcp-tool-definitions)
-   - 9.6 [Error Responses](#96-error-responses)
+- 9.1 [Overview](#91-overview) - 9.2 [Query Request Schema](#92-query-request-schema) - 9.3 [Query Response Schema](#93-query-response-schema) - 9.4 [Caller Context Schema](#94-caller-context-schema) - 9.5 [MCP Tool Definitions](#95-mcp-tool-definitions) - 9.6 [Error Responses](#96-error-responses)
 
 ### Enrichment (Sections 10-21) - separate document
 
@@ -138,6 +116,8 @@ Full MESA implementation including semantic retrieval API, enforcement, and opti
 - MUST require authentication equivalent to the host platform's API authentication.
 - SHOULD capture pre-execution snapshots for `snapshot_restorable` automations before they fire, and MUST capture them before promising snapshot restoration. Capture and restoration are host responsibilities; mesa-core does not implement them.
 - SHOULD deny lease requests for entities under `protected` or `critical` automation control. This requirement becomes MUST when lease tools are implemented.
+- MUST default shared voice satellites to the `guest` role and exclude inferred profiles from retrieval unless explicitly requested (Sections 9.4 and 9.2).
+
 - SHOULD support `enforced` mode. When supported, the server MUST reject service calls that violate `control_mode: prohibited` or active `declared_limits`. A Level 3 server that does not implement `enforced` mode is still conformant but cannot make the safety guarantees described in Section 3.
 
 ---
@@ -359,7 +339,7 @@ Human-authored profiles do not decay with age, but the deployment can change aro
 {
   "profile_valid_for": {
     "integration_version": "2.4.1",
-    "ha_version": "2026.5",
+    "ha_version": "2026.5.3",
     "review_after_days": 180,
     "invalidated_by_entities": ["light.living_room_ceiling"]
   }
@@ -428,38 +408,33 @@ The `inheritance_scope` field tells host implementations how to apply this profi
 
 When profiles from different origins, levels, or inheritance tiers declare conflicting values for the same field, the following global resolution rules apply. These rules are stated here as a single authoritative reference to prevent implementor ambiguity.
 
-**Rule A: `control_mode` follows tightening-only authority.**
-The most restrictive `control_mode` value wins at the field level, regardless of origin authority. `read_only` and `prohibited` are equally restrictive and beat `confirm` beats `autonomous`. An `inferred_ai` profile declaring `prohibited` is preserved even when a higher-authority `developer` profile declares `autonomous`, because tightening is always safe. This is a field-level rule that operates independently of profile-level origin authority (Rule D). No profile at any authority level may loosen a `prohibited` or `read_only` declaration.
+**Rule A: `control_mode` follows tightening-only authority.** The most restrictive `control_mode` value wins at the field level, regardless of origin authority. `read_only` and `prohibited` are equally restrictive and beat `confirm` beats `autonomous`. An `inferred_ai` profile declaring `prohibited` is preserved even when a higher-authority `developer` profile declares `autonomous`, because tightening is always safe. This is a field-level rule that operates independently of profile-level origin authority (Rule D). No profile at any authority level may loosen a `prohibited` or `read_only` declaration.
 
 **Rule A exception: the operator loosening override.** An entity-level profile with `metadata_origin.source: user` MAY loosen an inherited `confirm` to `autonomous` by declaring `control_mode: autonomous` together with `override_control_mode: true` and a `control_reason` explaining why autonomous control is safe in this deployment. This is the only permitted loosening of `control_mode`. It exists because a developer's `confirm` is a context-free conservative default, while the operator has deployment knowledge the developer cannot have. Constraints: the override is valid only at entity scope; it is valid only in `user`-origin profiles (`inferred_ai`, `hybrid`, and `unknown` profiles MUST NOT loosen); it can loosen only `confirm`, never `prohibited` or `read_only`; and `override_control_mode: true` without an accompanying `control_reason` is malformed and MUST be ignored. Host servers MUST surface active loosening overrides in `mesa_explain_profile` output.
 
-**Rule B: `triggers_automations: likely` is sticky upward.**
-If any profile at any level declares `triggers_automations: likely` for an entity, the effective value is `likely`. `none` is not sticky: a lower-level `likely` overrides a higher-level `none`, because the presence of a known trigger is more informative than an assertion of absence. `deployment_defined` at entity scope overrides `likely` from any higher level only when accompanied by `override_triggers_automations: true`. This reflects the deployment reality: if any profiler knows automations are likely triggered, that knowledge is preserved unless the operator explicitly overrides it with precise local knowledge.
+**Rule B: `triggers_automations: likely` is sticky upward.** If any profile at any level declares `triggers_automations: likely` for an entity, the effective value is `likely`. `none` is not sticky: a lower-level `likely` overrides a higher-level `none`, because the presence of a known trigger is more informative than an assertion of absence. `deployment_defined` at entity scope overrides `likely` from any higher level only when accompanied by `override_triggers_automations: true`. This reflects the deployment reality: if any profiler knows automations are likely triggered, that knowledge is preserved unless the operator explicitly overrides it with precise local knowledge.
 
-**Rule C: Privacy classification uses most-restrictive-wins.**
-When multiple profiles declare `privacy_classification.level` for the same entity, the most restrictive level applies. `restricted` beats `sensitive` beats `normal` beats `public` regardless of origin authority.
+**Rule C: Privacy classification uses most-restrictive-wins.** When multiple profiles declare `privacy_classification.level` for the same entity, the most restrictive level applies. `restricted` beats `sensitive` beats `normal` beats `public` regardless of origin authority.
 
-**Rule D: Scope precedence with origin tiebreak for all other fields.**
-For all fields not covered by Rules A, B, or C, resolution proceeds in two tiers. Within the trusted tier (`developer`, `user`, `hybrid`), the most specific scope wins: `entity` > `device` > `area` > `integration` > `domain`. Where scope is equal, origin authority decides: `developer` > `user` > `hybrid`. A `hybrid` profile is trusted **per field**, not wholesale: a field is trusted-tier only when that specific field path appears in the profile's `confirmed_fields`. An unconfirmed field of a `hybrid` profile remains inferred (Rule 6, Section 5.4) and is resolved in the lower tier, exactly as an `inferred_ai` field would be. Profiles of `inferred_ai` or `unknown` origin form a lower tier: they never override a field explicitly declared by any trusted-tier profile at any scope, consistent with Rule 7 (Section 5.4). When a field is declared only in the lower tier, the same scope-then-origin rule applies within it (`inferred_ai` > `unknown`). This preserves operator sovereignty (an operator's entity-level declaration beats a developer's domain-level default) while ensuring inferred and unattributed profiles can fill gaps but never displace explicit human or developer declarations.
+**Rule D: Scope precedence with origin tiebreak for all other fields.** For all fields not covered by Rules A, B, or C, resolution proceeds in two tiers. Within the trusted tier (`developer`, `user`, `hybrid`), the most specific scope wins: `entity` > `device` > `area` > `integration` > `domain`. Where scope is equal, origin authority decides: `developer` > `user` > `hybrid`. A `hybrid` profile is trusted **per field**, not wholesale: a field is trusted-tier only when that specific field path appears in the profile's `confirmed_fields`. An unconfirmed field of a `hybrid` profile remains inferred (Rule 6, Section 5.4) and is resolved in the lower tier, exactly as an `inferred_ai` field would be. Profiles of `inferred_ai` or `unknown` origin form a lower tier: they never override a field explicitly declared by any trusted-tier profile at any scope, consistent with Rule 7 (Section 5.4). When a field is declared only in the lower tier, the same scope-then-origin rule applies within it (`inferred_ai` > `unknown`). This preserves operator sovereignty (an operator's entity-level declaration beats a developer's domain-level default) while ensuring inferred and unattributed profiles can fill gaps but never displace explicit human or developer declarations.
 
 **Field paths.** Everywhere this specification names a field path (`confirmed_fields`, the explanation `field_path`, and the per-field trust of this rule), the grammar is dot-notation: a path is a sequence of property names joined by `.`, and each `.` is a segment separator. A path therefore covers the whole value declared at it: confirming `x_vendor.a` confirms everything beneath `x_vendor.a`, including an object value and all of its descendants. A property name that itself contains a `.` (or a `\`) is not path-addressable: a `confirmed_fields` entry always parses as nested segments and can never name such a property, so it receives no field-level trust of its own (it is still covered by a confirmed ancestor, and profiles of `developer` or `user` origin are unaffected, since their trust does not derive from paths). Implementations MUST NOT let a confirmation intended for a nested path also match a literal property name that renders identically; when reporting such a property in an explanation, implementations SHOULD render the `.` escaped (`a\.b`) so the reported path stays unambiguous.
 
 **Rule D, array-valued safety fields.** `declared_limits` and `temporal_constraints` are the exception to the replacement behaviour above: they are unioned across inheritance levels, not replaced. Each entry is an independent constraint identified by its `id`, and conforming consumers apply every entry, so the union is tightest-wins at evaluation time. The effective array is the union of all entries declared at every level. When the same `id` is declared at more than one level, that single entry is resolved by the standard Rule D precedence (trusted tier first, then most specific scope, then origin authority): a lower-tier entry MUST NOT displace a trusted entry with the same `id`, and a trusted profile at a more specific scope MAY deliberately override one inherited entry by reusing its `id`. Because entries only ever tighten, a more specific profile cannot silently drop an inherited safety limit by declaring an unrelated one. Removing an inherited entry therefore requires overriding it by `id`; there is no wholesale array replacement.
 
-**Rule E: Absence is not a conflict.**
-A field absent from a higher-authority profile is inherited from lower-authority profiles in scope. Absence means "not specified here," not "set to default." Defaults only apply when no profile at any level specifies the field.
+**Rule E: Absence is not a conflict.** A field absent from a higher-authority profile is inherited from lower-authority profiles in scope. Absence means "not specified here," not "set to default." Defaults only apply when no profile at any level specifies the field.
 
 ### 5.8 Deployment Defaults for Unprofiled Entities
 
 When an entity has no MESA profile at any inheritance level, agents have no semantic guidance beyond HA's operational layer. The safe fallback is `control_mode: confirm` for all writes, but this may be overly restrictive or overly permissive depending on the domain.
 
-An MCP server integrating mesa-core MAY expose a `deployment_defaults` configuration object that operators use to set domain-level defaults for all unprofiled entities in their deployment. This reduces the risk of incorrect assumptions without requiring per-entity profiling.
+An MCP server integrating mesa-core MAY expose a `deployment_defaults` configuration object that operators use to set domain-level defaults for unprofiled entities and undeclared fields, in their deployment, subject to the control-mode floor below. This reduces the risk of incorrect assumptions without requiring per-entity profiling.
 
 **`deployment_defaults` schema:**
 
 | Field | Type | Description |
 |---|---|---|
-| `default_control_mode` | `enum` | Default `control_mode` for all unprofiled entities. Overridden by any profile at any level. Default: `confirm`. |
+| `default_control_mode` | `enum` | Default `control_mode` for unprofiled entities and undeclared fields, subject to the control-mode floor below. Replaced by an explicit trusted control declaration; unrelated profile fields do not remove this fallback. Default: `confirm`. |
 | `domain_overrides` | `object` | Per-domain defaults. Keys are HA domain strings. Values are objects with `control_mode` and `triggers_automations` fields. |
 | `triggers_automations_domains` | `array<string>` | Domains for which unprofiled entities should default `triggers_automations: likely`. Recommended: include `input_boolean`, `input_select`, `input_number`, `counter`, `timer`. |
 
@@ -485,7 +460,7 @@ An MCP server integrating mesa-core MAY expose a `deployment_defaults` configura
 
 When `deployment_defaults` is configured, it acts as a floor below all MESA profile inheritance levels. Any profile at any level takes precedence. Tightening-only rules apply: domain overrides cannot loosen a profile-declared `prohibited`.
 
-**Built-in domain safety baseline.** When no `deployment_defaults` are configured and an entity has no profile at any inheritance level, host implementations SHOULD apply the following built-in baseline rather than defaulting everything to `confirm`. This prevents non-interactive agents from being completely locked out of well-understood low-risk domains before any profiles have been authored.
+**Built-in domain safety baseline.** When no `deployment_defaults` are configured, host implementations SHOULD apply the following baseline to unprofiled entities. If profiles exist without a trusted control declaration, preserve the stricter of this baseline and `confirm`. This prevents non-interactive agents from being completely locked out of well-understood low-risk domains before any profiles have been authored.
 
 | Domain | Built-in default `control_mode` | Rationale |
 |---|---|---|
@@ -1143,8 +1118,7 @@ Nothing in the Enrichment document is required for Level 1 or Level 2 conformanc
 
 Vendor-specific tags MUST follow: `vendorname.custom_qualifier`. All lowercase. No hyphens in namespace root.
 
-**Valid:** `myintegration.audio.spatial`, `mycommunity.lighting.circadian_advanced`
-**Invalid:** `MyIntegration.Audio` (uppercase), `my-integration.audio` (hyphen in root)
+**Valid:** `myintegration.audio.spatial`, `mycommunity.lighting.circadian_advanced` **Invalid:** `MyIntegration.Audio` (uppercase), `my-integration.audio` (hyphen in root)
 
 Vendor namespaces MUST NOT use canonical MESA namespace roots (see Appendix A). Vendor tags extending a canonical domain MUST prefix: `myvendor.lighting.custom_feature`, not `lighting.myvendor_feature`.
 
@@ -1297,9 +1271,9 @@ Conformance levels are declared by host implementations (Section 2). Table B.1 l
 | `include_inferred: false` is the default for retrieval queries | 9.2 | L3 MUST |
 | Unauthenticated requests rejected | 9.1 | L3 MUST |
 | Voice satellite shared devices use `guest` role as least-privilege default | 9.4 | L3 MUST |
-| Snapshot captured for `snapshot_restorable` automations before firing | 11.5 | L3 SHOULD |
+| Snapshot captured before firing `snapshot_restorable` automations; required before promising restoration | 11.5 | L3 SHOULD; MUST before promising restoration |
 | `binary_sensor.mesa_lease_active` sensor exposed for native automation awareness | 21.1 | L3 SHOULD |
-| Lease denied for `protected` or `critical` automation entities (when lease tools implemented) | 21.5 | L3 SHOULD |
+| Lease denied for `protected` or `critical` automation entities (when lease tools implemented) | 21.5 | L3 MUST |
 | Preempted agent notified before lease is taken (when lease tools implemented) | 21.6 | L3 SHOULD |
 | Vendor namespaces MUST NOT reuse canonical roots | 22 | L1 MUST |
 
@@ -1344,3 +1318,18 @@ Three clarifications, all merged into the running text of Sections 5.7 and 9.5; 
 ---
 
 *MESA - Metadata and Environment Semantics for Agents. Version 1.1.0. Core specification. See also: MESA Overview, MESA Enrichment, MESA Getting Started Guide, and mesa-core Module Proposal. Discussion and contributions are welcome via GitHub Issues.*
+
+## Interpretation notes from the October 2026 audit
+
+These notes resolve inconsistent wording in the sections above without changing the MESA 1.1 document version:
+
+- Rule E applies per field. An entity with profiles but no trusted `control_mode` declaration uses the stricter of `confirm` and its deployment/domain baseline. Global permissive defaults do not weaken the built-in lock/alarm prohibition without an explicit domain override. Trusted control declarations replace fallback values and then follow Rule A; inferred declarations never loosen the fallback.
+- In Rule B, “higher level” means a broader inheritance scope, not a higher numbered specificity. Select the trusted tier before applying stickiness and overrides; an override flag itself must be trusted. Inferred helper declarations resolve to `likely` even if they say `unknown` or `deployment_defined`.
+- Rule C permits inferred privacy levels to tighten access. Rule 3 still excludes unconfirmed inferred role lists, `is_minor` and denial response modes from access decisions. Trusted `deny_for` and `restricted_for` lists accumulate across scopes, and trusted `is_minor: true` cannot be cleared by another layer. Unknown access-role keys are preserved and ignored by older readers.
+- `time_range` is start-inclusive and end-exclusive. Midnight crossing is supported; equal bounds mean the full day. Evaluation uses the timezone of the supplied datetime (host local time when omitted). Native HA predicates that cannot be evaluated remain active; a host seeking exact native-condition semantics must supply that integration outside the reference library.
+- `profile_valid_for` version pins are exact strings, including patch versions. A future generation timestamp has unknown freshness. Future review anchors yield an unevaluable warning. Timestamp syntax is ISO date or date/time with optional timezone; calendar-date validity is a semantic check.
+- Query `total_matched`, pagination and cursors are computed after access shaping. Cursors bind the query, caller and visible effective data; clients cannot use hidden-only changes as an existence probe. Explicit empty filters match nothing. `limit` is mathematically integral and within 1..200, including a JSON representation such as `50.0`. Device/integration filters require host mappings and fail with `invalid_query` without them.
+- Section 9.6 envelopes describe errors reached by MESA handlers. A transport may reject malformed or schema-invalid calls before handler dispatch using standard MCP errors. Hosts needing uniform envelopes must implement that behavior at their transport boundary.
+- A valid lease session identifier is required. Positive durations below one millisecond are rejected by the reference implementation; durations above 30 seconds are clamped with a warning. Same-session refresh is allowed. Section 11 scope consumed by the reference implementation is the explicit trigger, condition and affected-entity arrays, not arbitrary similarly named containers.
+- Person household roles describe people; caller roles authorize authenticated sessions. No automatic `regular_guest` to `guest` or `admin` mapping is implied. Voice-satellite guest fallback, snapshot capture, host authentication and exact native HA condition evaluation are host obligations. Inferred rows are separately identifiable by provenance and opt-in; no separate response array is required.
+- Nonempty safety IDs and weekday lists are structural authoring requirements. `confirmed_fields` is meaningful only on hybrid metadata. Missing reasons on override flags produce warnings and make the override inert; they do not discard other restricting declarations in the document. Unknown fields remain forward-compatible; unknown enum values and use of reserved canonical tag namespaces remain validation errors pending a vocabulary/schema update. Hyphens are allowed in tag qualifiers but not namespace roots.

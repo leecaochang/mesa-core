@@ -93,13 +93,11 @@ def test_malformed_in_operand_cannot_disable_limit():
         }
     )
     store = ProfileStore(MemoryBackend({"light.test": doc}))
-    try:
-        result = MesaEnforcer(store, get_state=lambda eid: "on").evaluate(
-            "light.test", "light.turn_on", {"brightness": 200}
-        )
-    except MesaValidationError:
-        return  # Rejecting the malformed stored profile is also fail-closed.
-    assert not result.allowed, result
+    result = MesaEnforcer(store, get_state=lambda eid: "on").evaluate(
+        "light.test", "light.turn_on", {"brightness": 200}
+    )
+    assert not result.allowed
+    assert result.rule_applied == "policy_unavailable"
 
 
 def test_confirmation_redemption_is_atomic():
@@ -213,13 +211,11 @@ def test_duplicate_limit_cannot_disappear_in_resolution():
         }
     )
     store = ProfileStore(MemoryBackend({"light.test": doc}))
-    try:
-        result = MesaEnforcer(store, get_state=lambda eid: "on").evaluate(
-            "light.test", "light.turn_on", {"brightness": 200}
-        )
-    except MesaValidationError:
-        return  # Rejecting the malformed stored profile is also fail-closed.
-    assert not result.allowed, result
+    result = MesaEnforcer(store, get_state=lambda eid: "on").evaluate(
+        "light.test", "light.turn_on", {"brightness": 200}
+    )
+    assert not result.allowed
+    assert result.rule_applied == "policy_unavailable"
 
 
 def test_explicit_omit_survives_store_write():
@@ -369,7 +365,9 @@ def test_operator_operand_schema_matrix(operator, value, allowed):
     from mesa_core.enforcer import _compare
 
     schema = json.loads(
-        (Path(__file__).parents[1] / "mesa_core/schemas/mesa_profile.schema.json").read_text()
+        (Path(__file__).parents[1] / "mesa_core/schemas/mesa_profile.schema.json").read_text(
+            encoding="utf-8"
+        )
     )
     doc = document(
         operational_boundaries={
@@ -526,9 +524,8 @@ def test_explicit_fields_survive_archive_and_resolution(tmp_path):
     assert stored.to_dict()["semantic_profile"]["metadata_origin"]["x_vendor"] == {"nested": []}
 
 
-def test_confirmation_second_thread_cannot_enter_consumption():
-    import inspect
-    import sys
+def test_confirmation_second_thread_cannot_enter_consumption(monkeypatch):
+    import mesa_core.enforcer as module
 
     manager = ConfirmationManager()
     now = datetime.now()
@@ -538,43 +535,30 @@ def test_confirmation_second_thread_cannot_enter_consumption():
         "approved_by": "resident",
         "approved_at": now.isoformat(),
     }
-    lines, start = inspect.getsourcelines(ConfirmationManager.redeem)
-    mark = start + next(i for i, line in enumerate(lines) if 'record["used"] = True' in line)
-    paused, release, attempted = threading.Event(), threading.Event(), threading.Event()
+    original = module._canonical_params
+    entered, release, second_entered = threading.Event(), threading.Event(), threading.Event()
+    calls = []
 
-    def trace(frame, event, arg):
-        if (
-            frame.f_code is ConfirmationManager.redeem.__code__
-            and event == "line"
-            and frame.f_lineno == mark
-        ):
-            paused.set()
+    def observed(params):
+        calls.append(threading.get_ident())
+        if len(calls) == 1:
+            entered.set()
             assert release.wait(5)
-        return trace
+        else:
+            second_entered.set()
+        return original(params)
 
-    def first():
-        sys.settrace(trace)
-        try:
-            return manager.redeem(token, "cover.test", "cover.open_cover", {}, now)[0]
-        finally:
-            sys.settrace(None)
-
-    def second():
-        attempted.set()
-        return manager.redeem(token, "cover.test", "cover.open_cover", {}, now)[0]
-
+    monkeypatch.setattr(module, "_canonical_params", observed)
     with ThreadPoolExecutor(2) as pool:
-        one = pool.submit(first)
+        one = pool.submit(manager.redeem, token, "cover.test", "cover.open_cover", {}, now)
         try:
-            assert paused.wait(5)
-            two = pool.submit(second)
-            assert attempted.wait(5)
-            # The unused record remains protected while the first consumer pauses.
-            assert not two.done()
+            assert entered.wait(5)
+            two = pool.submit(manager.redeem, token, "cover.test", "cover.open_cover", {}, now)
+            assert not second_entered.wait(0.1)
         finally:
             release.set()
-        assert one.result(5) is True
-        assert two.result(5) is False
+        assert one.result(5)[0] is True
+        assert two.result(5)[0] is False
 
 
 @pytest.mark.parametrize("scope", ["domain", "integration", "area", "device"])

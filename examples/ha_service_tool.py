@@ -15,6 +15,7 @@ own HA client where `perform_ha_call` is injected.
 # --- docs:call_ha_service:start
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from datetime import datetime
@@ -32,9 +33,7 @@ from mesa_core.privacy import CallerContext
 # an ordinary data field named `target` (`notify.notify` names its recipients
 # with it), so a tool spanning both shapes must route on the service's schema
 # and apply this only where an entity is the target.
-RESERVED_TARGET_KEYS: frozenset[str] = frozenset(
-    {"entity_id", "target", *HA_TARGET_SELECTOR_KEYS}
-)
+RESERVED_TARGET_KEYS: frozenset[str] = frozenset({"entity_id", "target", *HA_TARGET_SELECTOR_KEYS})
 
 
 def build_call_ha_service(
@@ -57,6 +56,16 @@ def build_call_ha_service(
         # let a concurrent mutation forward a call that was never the one
         # evaluated. Check, evaluate, and execute must all see the same bytes.
         data = deepcopy(service_data or {})
+        domain, service, entity_id = (
+            value.strip().lower() for value in (domain, service, entity_id)
+        )
+        if (
+            re.fullmatch(r"[a-z_][a-z0-9_]*", domain) is None
+            or re.fullmatch(r"[a-z_][a-z0-9_]*", service) is None
+            or re.fullmatch(r"[a-z_][a-z0-9_]*\.[a-z0-9_]+", entity_id) is None
+            or entity_id.split(".", 1)[0] != domain
+        ):
+            raise MesaEnforcementError("service must target a valid entity in its own domain")
 
         # This tool is entity-targeted, so service data carries service data
         # only. Home Assistant also lets an action name its target as a device,
@@ -87,6 +96,11 @@ def build_call_ha_service(
             confirmation_token=confirmation_token,
         )
         if not result.allowed:
+            if result.rule_applied == "privacy:deny_for":
+                if result.deny_response_mode == "omit":
+                    raise MesaEnforcementError("entity not found")
+                if result.deny_response_mode == "redact":
+                    raise MesaEnforcementError("access denied")
             if result.confirmation_challenge is not None:
                 # control_mode: confirm. Not a refusal: hand the challenge back
                 # to the agent, which shows the user what is about to happen and
@@ -101,4 +115,6 @@ def build_call_ha_service(
         return {"ok": True, "result": await perform_ha_call(domain, service, call_data)}
 
     return call_ha_service
+
+
 # --- docs:call_ha_service:end

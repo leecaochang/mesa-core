@@ -86,7 +86,10 @@ def test_documented_handler_registers_on_standalone_fastmcp() -> None:
 
     async def published() -> dict[str, Any]:
         async with fastmcp.Client(server) as client:
-            return {t.name: t.model_dump(by_alias=True)["inputSchema"] for t in await client.list_tools()}["call_ha_service"]
+            return {
+                t.name: t.model_dump(by_alias=True)["inputSchema"]
+                for t in await client.list_tools()
+            }["call_ha_service"]
 
     schema = asyncio.run(published())
     assert set(schema["properties"]) == EXPECTED_PROPERTIES
@@ -158,11 +161,11 @@ def test_documented_handler_matches_the_module_proposal() -> None:
     is exactly how the guard above ended up in the documentation but not in the
     fixture that was supposed to protect it.
     """
-    source = EXAMPLE_PATH.read_text()
+    source = EXAMPLE_PATH.read_text(encoding="utf-8")
     marked = source.split("# --- docs:call_ha_service:start\n")[1]
     marked = marked.split("# --- docs:call_ha_service:end")[0].rstrip("\n")
     assert marked.strip(), "marker region is empty"
-    assert marked in MODULE_DOC.read_text(), (
+    assert marked in MODULE_DOC.read_text(encoding="utf-8"), (
         "documents/MESA-Module.md does not contain examples/ha_service_tool.py's marked "
         "region verbatim; update the document to match the example"
     )
@@ -170,7 +173,9 @@ def test_documented_handler_matches_the_module_proposal() -> None:
 
 def test_documented_handler_is_the_only_service_tool_in_the_module() -> None:
     # Guards against a second, unexercised copy reappearing in the document.
-    assert len(re.findall(r"async def call_ha_service\(", MODULE_DOC.read_text())) == 1
+    assert (
+        len(re.findall(r"async def call_ha_service\(", MODULE_DOC.read_text(encoding="utf-8"))) == 1
+    )
 
 
 def test_the_documented_block_executes_on_its_own() -> None:
@@ -181,7 +186,7 @@ def test_the_documented_block_executes_on_its_own() -> None:
     while referencing four names the document never defined. Executing it in an
     empty namespace is what proves a reader can paste it and have it work.
     """
-    source = EXAMPLE_PATH.read_text()
+    source = EXAMPLE_PATH.read_text(encoding="utf-8")
     marked = source.split("# --- docs:call_ha_service:start\n")[1]
     marked = marked.split("# --- docs:call_ha_service:end")[0]
     namespace: dict[str, Any] = {}

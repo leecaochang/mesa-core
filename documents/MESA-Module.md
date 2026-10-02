@@ -1,8 +1,5 @@
 # mesa-core: MESA Reference Module Proposal
-**Version:** 1.1
-**Describes:** MESA 1.1, mesa-core 1.3.x
-**Document Type:** Technical Implementation Specification
-**Companion Documents:**
+**Version:** 1.1 **Describes:** MESA 1.1, mesa-core 1.3.x **Document Type:** Technical Implementation Specification **Companion Documents:**
 - MESA Overview
 - MESA Specification (Core)
 - MESA Enrichment
@@ -24,26 +21,11 @@ This document describes what mesa-core does, how it is structured, how MCP serve
 2. [Architecture Overview](#2-architecture-overview)
 3. [Package Structure](#3-package-structure)
 4. [Core Components](#4-core-components)
-   - 4.1 [SemanticProfile Dataclass](#41-semanticprofile-dataclass)
-   - 4.2 [ProfileStore](#42-profilestore)
-   - 4.3 [Storage Backends](#43-storage-backends)
-   - 4.4 [MesaEnforcer](#44-mesaenforcer)
-   - 4.5 [InheritanceResolver](#45-inheritanceresolver)
-   - 4.6 [ConflictResolver](#46-conflictresolver)
-   - 4.7 [TemporalEvaluator](#47-temporalevaluator)
-   - 4.8 [TriggerValidator](#48-triggervalidator)
-   - 4.9 [PrivacyEnforcer](#49-privacyenforcer)
-   - 4.10 [LeaseManager](#410-leasemanager)
-   - 4.11 [Audit Events](#411-audit-events)
-   - 4.12 [Profile Export and Import](#412-profile-export-and-import)
+- 4.1 [SemanticProfile Dataclass](#41-semanticprofile-dataclass) - 4.2 [ProfileStore](#42-profilestore) - 4.3 [Storage Backends](#43-storage-backends) - 4.4 [MesaEnforcer](#44-mesaenforcer) - 4.5 [InheritanceResolver](#45-inheritanceresolver) - 4.6 [ConflictResolver](#46-conflictresolver) - 4.7 [TemporalEvaluator](#47-temporalevaluator) - 4.8 [TriggerValidator](#48-triggervalidator) - 4.9 [PrivacyEnforcer](#49-privacyenforcer) - 4.10 [LeaseManager](#410-leasemanager) - 4.11 [Audit Events](#411-audit-events) - 4.12 [Profile Export and Import](#412-profile-export-and-import)
 5. [MCP Tool Registration](#5-mcp-tool-registration)
-   - 5.1 [register_mesa_tools()](#51-register_mesa_tools)
-   - 5.2 [Tool Implementations](#52-tool-implementations)
+- 5.1 [register_mesa_tools()](#51-register_mesa_tools) - 5.2 [Tool Implementations](#52-tool-implementations)
 6. [Integration Guide](#6-integration-guide)
-   - 6.1 [Minimal Integration (Level 1)](#61-minimal-integration-level-1)
-   - 6.2 [Full Integration (Level 3)](#62-full-integration-level-3)
-   - 6.3 [Framework Adapters](#63-framework-adapters)
-   - 6.4 [Host Callback Reference](#64-host-callback-reference)
+- 6.1 [Minimal Integration (Level 1)](#61-minimal-integration-level-1) - 6.2 [Full Integration (Level 3)](#62-full-integration-level-3) - 6.3 [Framework Adapters](#63-framework-adapters) - 6.4 [Host Callback Reference](#64-host-callback-reference)
 7. [Conformance Test Suite](#7-conformance-test-suite)
 8. [Version Scope](#8-version-scope)
 9. [Future Versions](#9-future-versions)
@@ -111,7 +93,7 @@ mesa-core/
         schemas/
             mesa_profile.schema.json   # Canonical JSON Schema for MESA profiles (v1.1)
             mesa_tools.schema.json     # JSON Schema for MCP tool inputs and outputs
-        profile.py               # SemanticProfile, DiagnosticProfile dataclasses
+        profile.py               # SemanticProfile and supporting dataclasses
         store.py                 # ProfileStore interface
         enforcer.py              # MesaEnforcer, DOMAIN_SAFETY_BASELINE
         inheritance.py           # InheritanceResolver
@@ -175,165 +157,32 @@ mesa-core/
 
 The canonical Python representation of a MESA profile. All internal components work with this dataclass rather than raw dictionaries.
 
+The complete fields and signatures are defined in [profile.py](../mesa_core/profile.py). `diagnostic_profile` is a dictionary; there is no separate `DiagnosticProfile` class. `OperationalBoundaries`, `PrivacyClassification`, `ProfileMetadata`, and `PersonTraits` are typed dataclasses.
+
 ```python
-from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any
-from enum import Enum
+from mesa_core import SemanticProfile
+from mesa_core.profile import ControlMode
 
-class ControlMode(str, Enum):
-    AUTONOMOUS = "autonomous"
-    CONFIRM = "confirm"
-    READ_ONLY = "read_only"
-    PROHIBITED = "prohibited"
-
-class TriggersAutomations(str, Enum):
-    LIKELY = "likely"
-    NONE = "none"
-    UNKNOWN = "unknown"
-    DEPLOYMENT_DEFINED = "deployment_defined"
-
-class PrivacyLevel(str, Enum):
-    PUBLIC = "public"
-    NORMAL = "normal"
-    SENSITIVE = "sensitive"
-    RESTRICTED = "restricted"
-
-class MetadataOrigin(str, Enum):
-    DEVELOPER = "developer"
-    USER = "user"
-    HYBRID = "hybrid"
-    INFERRED_AI = "inferred_ai"
-    UNKNOWN = "unknown"
-
-@dataclass
-class PrivacyClassification:
-    level: PrivacyLevel = PrivacyLevel.NORMAL
-    contains_presence_data: bool = False
-    contains_audio_capture: bool = False
-    contains_visual_capture: bool = False
-    contains_biometric_data: bool = False
-    access_roles: Optional[Dict[str, List[str]]] = None
-    deny_response_mode: str = "omit"
-    privacy_note: Optional[str] = None
-
-@dataclass
-class OperationalBoundaries:
-    control_mode: ControlMode = ControlMode.CONFIRM
-    triggers_automations: TriggersAutomations = TriggersAutomations.UNKNOWN
-    reversible: Optional[bool] = None
-    reversibility_cost: Optional[str] = None
-    reversibility_note: Optional[str] = None
-    side_effect_scope: Optional[str] = None
-    state_volatility: Optional[str] = None
-    enforcement_mode: str = "advisory"
-    control_reason: Optional[str] = None
-    declared_limits: List[Dict[str, Any]] = field(default_factory=list)
-    temporal_constraints: List[Dict[str, Any]] = field(default_factory=list)
-    override_triggers_automations: bool = False
-    override_control_mode: bool = False
-
-@dataclass
-class ProfileMetadata:
-    schema_version: str = "1.1"
-    profile_version: Optional[str] = None
-    source: MetadataOrigin = MetadataOrigin.UNKNOWN
-    confidence: Optional[float] = None
-    generated_at: Optional[str] = None
-    staleness_window_days: float = 60  # number per Spec 5.4; int or float preserved
-    confirmed_fields: List[str] = field(default_factory=list)
-    last_updated: Optional[str] = None
-    profile_valid_for: Optional[Dict[str, Any]] = None
-
-@dataclass
-class PersonTraits:
-    # People semantics (Enrichment Section 17); None / empty list = not declared.
-    household_role: Optional[str] = None
-    display_name: Optional[str] = None
-    is_minor: Optional[bool] = None
-    associated_zones: List[str] = field(default_factory=list)
-    associated_automations: List[str] = field(default_factory=list)
-    presence_entity: Optional[str] = None
-
-@dataclass
-class SemanticProfile:
-    entity_id: str
-    semantic_tags: List[str] = field(default_factory=list)
-    metadata: ProfileMetadata = field(default_factory=ProfileMetadata)
-    operational_boundaries: OperationalBoundaries = field(default_factory=OperationalBoundaries)
-    privacy_classification: PrivacyClassification = field(default_factory=PrivacyClassification)
-    person_traits: PersonTraits = field(default_factory=PersonTraits)
-    inheritance_scope: str = "entity"
-    diagnostic_profile: Optional[Dict[str, Any]] = None
-    raw: Dict[str, Any] = field(default_factory=dict)
-    parse_warnings: List[str] = field(default_factory=list)
-    # Dotted paths the source document explicitly declared, so Rule E can tell
-    # "absent" from "set to the default value" on reserialisation.
-    declared_paths: set = field(default_factory=set)
-
-    @classmethod
-    def from_dict(cls, entity_id: str, data: dict) -> "SemanticProfile":
-        """Parse a profile from raw JSON/dict representation."""
-        ...
-
-    def to_dict(self) -> dict:
-        """Serialise to JSON-compatible dict."""
-        ...
-
-    def is_inferred(self) -> bool:
-        return self.metadata.source == MetadataOrigin.INFERRED_AI
-
-    def effective_confidence(self) -> float:
-        """Declared confidence, or 1.0 for trusted origins and 0.0 otherwise."""
-        ...
-
-    # known_entity_ids is a Collection, not an Iterable: these methods can each
-    # be called with the same value (and freshness() evaluates once for both),
-    # so a one-shot iterable would be exhausted by the first call and read as
-    # an empty registry afterwards, inventing removal warnings. The host
-    # callback carries the same requirement: it runs once per entity, so one
-    # generator reused across those calls is drained by the first row of a
-    # query. (A freshly built generator each call would survive, but nothing
-    # can distinguish the two, so a one-shot value is refused either way.)
-    def freshness(self, now: Optional[datetime] = None, *,
-                  known_entity_ids: Optional[Collection[str]] = None,
-                  integration_version: Optional[str] = None,
-                  ha_version: Optional[str] = None) -> FreshnessReport:
-        """Staleness status and invalidation warnings from ONE evaluation."""
-        ...
-
-    def staleness_status(self, now: Optional[datetime] = None, *,
-                         known_entity_ids: Optional[Collection[str]] = None,
-                         integration_version: Optional[str] = None,
-                         ha_version: Optional[str] = None) -> str:
-        """current / stale / unknown (Spec 5.4), including fired
-        profile_valid_for invalidation triggers."""
-        ...
-
-    def validity_warnings(self, *, now: Optional[datetime] = None,
-                          known_entity_ids: Optional[Collection[str]] = None,
-                          integration_version: Optional[str] = None,
-                          ha_version: Optional[str] = None) -> List[str]:
-        """Advisory warnings from the profile_valid_for triggers (Spec 5.5)."""
-        ...
-
-@dataclass
-class FreshnessReport:
-    status: str                                  # current / stale / unknown
-    warnings: List[str] = field(default_factory=list)
+profile = SemanticProfile.from_dict(
+    "light.study", {"semantic_profile": {"metadata_origin": {"source": "user"}}}
+)
+profile.operational_boundaries.control_mode = ControlMode.CONFIRM
+# Explicit assignments are declarations, including values equal to defaults.
+assert profile.declared("operational_boundaries.control_mode")
+# Use undeclare to resume inheritance for a field.
+profile.undeclare("operational_boundaries.control_mode")
 ```
 
-**Freshness evaluation.** `staleness_status()` and `validity_warnings()` read
-the same `profile_valid_for` triggers, so a caller wanting both should call
-`freshness()` rather than each in turn: one evaluation cannot report a status
-and a warning set that disagree, two can. `FreshnessReport` is exported from
-the package root.
+`from_dict` also accepts bare semantic-profile contents. A bare `diagnostic_profile` is canonicalised to the root sibling. Serialization preserves unknown fields but is not byte-for-byte identity: it stamps the schema version and origin source, canonicalises privacy placement, and may omit empty non-declared containers. Parsing records source declarations; construction and subsequent assignments record explicit values even when equal to dataclass defaults.
+
+**Freshness evaluation.** `staleness_status()` and `validity_warnings()` read the same `profile_valid_for` triggers, so a caller wanting both should call `freshness()` rather than each in turn: one evaluation cannot report a status and a warning set that disagree, two can. `FreshnessReport` is exported from the package root.
 
 ### 4.2 ProfileStore
 
 The central interface for profile storage. Host servers instantiate this with a backend and use it for all profile operations.
 
 ```python
-from mesa_core import ProfileStore
+from mesa_core import ProfileStore, SemanticProfile
 from mesa_core.backends import JsonFileBackend
 
 store = ProfileStore(backend=JsonFileBackend("/config/mesa/"))
@@ -344,7 +193,10 @@ profile = store.get("light.living_room_ceiling")
 # Get effective profile after inheritance resolution
 effective = store.get_effective("light.living_room_ceiling")
 
-# Store a profile
+# Store a profile, including the first write into an empty store
+profile = profile or SemanticProfile.from_dict(
+    "light.living_room_ceiling", {"metadata_origin": {"source": "user"}}
+)
 store.set("light.living_room_ceiling", profile)
 
 # Delete a profile
@@ -357,80 +209,14 @@ result = store.query(domains=["light"], tags=["lighting.ambient"])
 defaults = store.get_deployment_defaults()
 
 # Set deployment defaults
-store.set_deployment_defaults(defaults_dict)
+store.set_deployment_defaults({"default_control_mode": "confirm"})
 ```
 
-**ProfileStore public API:**
+**ProfileStore public API.** The signatures in [store.py](../mesa_core/store.py) are authoritative. Registry callbacks are keyword-only: `get_entity_domain`, `get_entity_area`, `get_entity_device`, and `get_entity_integration`. Entity CRUD uses canonical lowercase HA identifiers; scope CRUD uses the separate `get/set/delete_*_profile` methods. Never pass reserved storage keys to entity APIs. `store.resolver` is shared by enforcement, retrieval, triggers and leases; `attach_resolver` rejects a resolver belonging to another store. Configure mappings before serving requests. Registry callbacks must return a nonempty string or `None`; malformed or raising callbacks cannot silently remove policy layers.
 
-```python
-class ProfileStore:
-    def __init__(
-        self,
-        backend: StorageBackend,
-        get_entity_area: Optional[Callable[[str], Optional[str]]] = None,
-        get_entity_integration: Optional[Callable[[str], Optional[str]]] = None,
-        get_entity_device: Optional[Callable[[str], Optional[str]]] = None
-    ): ...
-    def get(self, entity_id: str) -> Optional[SemanticProfile]: ...
-    def get_effective(self, entity_id: str) -> SemanticProfile: ...
-    def set(self, entity_id: str, profile: SemanticProfile) -> None: ...
-    def delete(self, entity_id: str) -> None: ...
-    # Scope profiles (domain-, integration-, area-, and device-level) have
-    # symmetric get/set/delete.
-    def get_domain_profile(self, domain: str) -> Optional[SemanticProfile]: ...
-    def set_domain_profile(self, domain: str, profile: SemanticProfile) -> None: ...
-    def delete_domain_profile(self, domain: str) -> None: ...
-    def get_integration_profile(self, integration: str) -> Optional[SemanticProfile]: ...
-    def set_integration_profile(self, integration: str, profile: SemanticProfile) -> None: ...
-    def delete_integration_profile(self, integration: str) -> None: ...
-    def get_area_profile(self, area_id: str) -> Optional[SemanticProfile]: ...
-    def set_area_profile(self, area_id: str, profile: SemanticProfile) -> None: ...
-    def delete_area_profile(self, area_id: str) -> None: ...
-    def get_device_profile(self, device_id: str) -> Optional[SemanticProfile]: ...
-    def set_device_profile(self, device_id: str, profile: SemanticProfile) -> None: ...
-    def delete_device_profile(self, device_id: str) -> None: ...
-    # Key enumeration: stored identifiers per scope, as bare names.
-    def entity_keys(self) -> List[str]: ...
-    def domain_keys(self) -> List[str]: ...
-    def integration_keys(self) -> List[str]: ...
-    def area_keys(self) -> List[str]: ...
-    def device_keys(self) -> List[str]: ...
-    def query(self, *,
-              domains: Optional[List[str]] = None,
-              tags: Optional[List[str]] = None,
-              tags_match: str = "any",
-              areas: Optional[List[str]] = None,
-              devices: Optional[List[str]] = None,
-              integrations: Optional[List[str]] = None,
-              intents: Optional[List[str]] = None,
-              include_inferred: bool = False,
-              origin: Optional[str] = None,
-              min_origin_authority: Optional[str] = None,
-              limit: int = 50,
-              cursor: Optional[str] = None,
-              resolver: Optional[InheritanceResolver] = None) -> ProfileQueryResult: ...
-    # None when the operator has configured no deployment defaults.
-    def get_deployment_defaults(self) -> Optional[DeploymentDefaults]: ...
-    def set_deployment_defaults(self, defaults: dict) -> None: ...
-    def explain(self, entity_id: str) -> ProfileExplanation: ...
-    def find_orphans(self, known_entity_ids: Iterable[str], *,
-                     known_domains: Optional[Iterable[str]] = None,
-                     known_integrations: Optional[Iterable[str]] = None,
-                     known_areas: Optional[Iterable[str]] = None,
-                     known_devices: Optional[Iterable[str]] = None) -> List[str]: ...
+**Sync and async APIs.** All public methods on `ProfileStore`, `MesaEnforcer`, and `TriggerValidator` are available in both synchronous and asynchronous variants, prefixed with `a` (e.g. `get()` / `aget()`, `evaluate()` / `aevaluate()`). `LeaseManager`'s lifecycle methods have async variants (`arequest()`, `arelease()`, `arelease_session()`, `aexpire()`); its `active_leases()` is a synchronous in-memory read and `sensor_state()` can sweep expiry and invoke host event handlers. Async resolution goes through the store: `aget_effective()` and `aexplain()` wrap the `InheritanceResolver`. `PrivacyEnforcer.evaluate()` is synchronous-only by design: it is pure computation with no I/O, so it cannot block the event loop. MCP servers are typically async; host servers SHOULD use the async variants for anything that touches storage.
 
-    # Every method above also has an `a`-prefixed async variant, e.g.:
-    async def aget(self, entity_id: str) -> Optional[SemanticProfile]: ...
-    async def aset_domain_profile(self, domain: str, profile: SemanticProfile) -> None: ...
-    async def aquery(self, **kwargs) -> ProfileQueryResult: ...
-    async def aexplain(self, entity_id: str) -> ProfileExplanation: ...
-```
-
-The only exception is `attach_resolver()`, which is synchronous-only configuration wiring with no I/O.
-
-**Sync and async APIs.** All public methods on `ProfileStore`, `MesaEnforcer`, and `TriggerValidator` are available in both synchronous and asynchronous variants, prefixed with `a` (e.g. `get()` / `aget()`, `evaluate()` / `aevaluate()`). `LeaseManager`'s lifecycle methods have async variants (`arequest()`, `arelease()`, `arelease_session()`, `aexpire()`); its `active_leases()` and `sensor_state()` are synchronous-only reads of in-memory state. Async resolution goes through the store: `aget_effective()` and `aexplain()` wrap the `InheritanceResolver`. `PrivacyEnforcer.evaluate()` is synchronous-only by design: it is pure computation with no I/O, so it cannot block the event loop. MCP servers are typically async; host servers SHOULD use the async variants for anything that touches storage.
-
-**Bulk operations.** `set_many()` and `delete_many()` (and their async variants `aset_many()`, `adelete_many()`) accept dictionaries and lists respectively, allowing operators to import or remove profiles for many entities in a single operation. These are essential for deployments with hundreds of entities.
+**Bulk operations.** `set_many()` and `delete_many()` (and their async variants `aset_many()`, `adelete_many()`) accept dictionaries and lists respectively, allowing operators to import or remove profiles for many entities in a single operation. `set_many()` validates every document and identifier before the first write. Backend I/O failures can still leave a partial batch; these APIs do not promise cross-document transactions.
 
 **Scope enumeration.** `domain_keys()`, `integration_keys()`, `area_keys()`, and `device_keys()` return the domain names, integration names, area IDs, and device IDs that have a scope-level profile stored, as bare identifiers, mirroring `entity_keys()` for entity profiles. The reserved key scheme that separates the scopes internally is never exposed. Pair them with the matching `get_*_profile()` to walk every stored scope profile, for instance to surface the domain and area defaults an operator has configured.
 
@@ -442,6 +228,7 @@ All backends implement the `StorageBackend` abstract base class. Host servers ca
 
 ```python
 from abc import ABC, abstractmethod
+
 
 class StorageBackend(ABC):
     @abstractmethod
@@ -480,7 +267,7 @@ MemoryBackend(initial_data: Optional[dict] = None)
 Evaluates whether a proposed service call is permitted under the entity's MESA profile. The host server calls this before forwarding any service call to HA.
 
 ```python
-from mesa_core import MesaEnforcer, CallerContext
+from mesa_core import MesaEnforcer, CallerContext, MesaEnforcementError
 from datetime import datetime
 
 enforcer = MesaEnforcer(store=store)
@@ -493,9 +280,9 @@ result = enforcer.evaluate(
         caller_id="user.abc123",
         roles=["primary_resident"],
         is_authenticated=True,
-        session_id="sess_xyz"
+        session_id="sess_xyz",
     ),
-    current_time=datetime.now()
+    current_time=datetime.now(),
 )
 
 if result.allowed:
@@ -512,23 +299,19 @@ else:
 class EnforcementResult:
     allowed: bool
     reason: str
-    rule_applied: Optional[str]       # e.g. "control_mode:prohibited"
+    rule_applied: Optional[str]  # e.g. "control_mode:prohibited"
     entity_id: str
     effective_profile: SemanticProfile
-    warnings: List[str]               # non-blocking advisory messages
+    warnings: List[str]  # non-blocking advisory messages
+    confirmation_challenge: Optional[Dict[str, Any]] = None
+    deny_response_mode: Optional[str] = None
+    active_constraint_ids: List[str] = field(default_factory=list)
+    active_constraint_reasons: Dict[str, str] = field(default_factory=dict)
 ```
 
-**Built-in domain safety baseline.** When resolving effective profiles, `MesaEnforcer` applies the built-in domain safety baseline for entities that have no profile at any inheritance level and no `deployment_defaults` configured. This prevents non-interactive agents from being completely locked out before any profiles have been authored. The baseline matches the domain table defined in Specification Section 5.8. Host servers MAY override the baseline by configuring `deployment_defaults`.
+`MesaEnforcer(store, *, resolver=None, mode="enforced", interactive=True, challenge_ttl_seconds=120, ...)` accepts state, calendar and solar callbacks; see [enforcer.py](../mesa_core/enforcer.py) for full signatures. TTL must be an integer in 1..120 seconds. At most 4,096 outstanding or recently used challenges are retained until expiry. The host creates approval tokens after authentic human approval. Limits are checked before a challenge is issued or consumed.
 
-```python
-# Built-in baseline is applied automatically by MesaEnforcer
-# when no profile exists at any level and no deployment_defaults are set.
-# Hosts can inspect the baseline:
-from mesa_core.enforcer import DOMAIN_SAFETY_BASELINE
-
-print(DOMAIN_SAFETY_BASELINE["light"])   # ControlMode.AUTONOMOUS
-print(DOMAIN_SAFETY_BASELINE["lock"])    # ControlMode.PROHIBITED
-```
+**Built-in domain safety baseline.** Unprofiled entities use the configured deployment default or built-in domain baseline. Profiles that omit `control_mode` preserve the stricter of that default and `confirm`; unrelated metadata cannot downgrade a lock's `prohibited` baseline. Inferred control declarations cannot loosen that floor. A trusted control declaration explicitly replaces the fallback and is then resolved against other declarations by Rule A. A global permissive deployment default leaves locks and alarms prohibited unless the operator explicitly configures their domain override.
 
 **Fail-closed (deny-by-default) deployments.** Some hosts delegate all per-entity gating to MESA rather than maintaining their own permission layer (for example a single pass-through credential whose entire policy is "whatever MESA says"). The built-in baseline is permissive for some domains (`light` is `autonomous`; unknown domains are `confirm`), so a forgotten entity could be controllable. To invert the posture so unprofiled entities fail closed, configure `deployment_defaults` with a restrictive global default and open up only the domains (or individual entity/area/domain profiles) you intend to be controllable:
 
@@ -536,15 +319,17 @@ print(DOMAIN_SAFETY_BASELINE["lock"])    # ControlMode.PROHIBITED
 from mesa_core import ControlMode
 from mesa_core.store import DeploymentDefaults
 
-store.set_deployment_defaults(DeploymentDefaults(
-    default_control_mode=ControlMode.PROHIBITED,   # fallback for unprofiled entities
-    domain_overrides={
-        "light": {"control_mode": "autonomous"},   # domains to leave controllable
-    },
-))
+store.set_deployment_defaults(
+    DeploymentDefaults(
+        default_control_mode=ControlMode.PROHIBITED,  # fallback for unprofiled entities
+        domain_overrides={
+            "light": {"control_mode": "autonomous"},  # domains to leave controllable
+        },
+    )
+)
 ```
 
-This default applies **only to unprofiled entities**: it fills `control_mode` solely for an entity that has no profile at any level (entity, device, area, integration, or domain), matching Specification 5.8 and the control_mode precedence note in Section 4 (operators loosen an unprofiled entity via `deployment_defaults`, a profiled one via the Section 5.7 Rule A override). A profiled entity that simply omits `control_mode` defaults to `confirm`, never to the deployment default, so the default can never loosen a profiled entity below `confirm`. It does not participate in the Rule A most-restrictive comparison either, so a declared `autonomous` stays `autonomous`. Two practical notes for fail-closed operators:
+This default applies to unprofiled entities and supplies the fallback when profiles omit control mode. A profiled entity without a trusted control declaration uses the stricter of that fallback and `confirm`; unrelated metadata cannot downgrade a `prohibited` fallback. Trusted control declarations replace the fallback and then participate in Rule A, so an explicit trusted `autonomous` stays autonomous unless another declaration restricts it. Two practical notes for fail-closed operators:
 
 - `prohibited` hard-blocks only when the call is evaluated in enforced mode; in advisory mode it passes with a warning. Pair a `prohibited` default with enforced evaluation. (`read_only` blocks regardless of enforcement mode, but it asserts entity nature rather than policy, so `prohibited` is the better fit for "not yet granted.")
 - `control_mode` gates control (writes/service calls) only; it never gates reads. mesa-core has no blanket read-deny default, and privacy denial is role-based (`access_roles.deny_for`), not a configurable default. Read/visibility fail-closed remains the host's responsibility.
@@ -555,10 +340,9 @@ This default applies **only to unprofiled entities**: it fills `control_mode` so
 2. Apply temporal constraints via TemporalEvaluator first, so a temporally tightened `control_mode` is what the following steps evaluate.
 3. Apply privacy enforcement via PrivacyEnforcer. If caller is in `deny_for`, block immediately; a `restricted` effective level coerces `autonomous` to `confirm`.
 4. Evaluate `control_mode`:
-   - `read_only`: block with reason "Entity is read-only by nature: {control_reason or entity_id}".
-   - `prohibited`: block with reason "Entity is prohibited by policy: {control_reason or entity_id}".
-   - `confirm`: in advisory mode, add confirmation warning and surface `control_reason`. In enforced mode, deny the call and return a `confirmation_challenge`, or allow it when a valid `confirmation_token` accompanies the call (Specification Section 6.6). If no interaction channel exists, block as `prohibited`.
-   - `autonomous`: proceed.
+- `read_only` and `prohibited`: block in enforced mode; warn and allow in advisory mode, preserving the reason describing nature or policy.
+- `confirm`: in advisory mode, warn and allow. In enforced interactive mode, return a confirmation challenge or redeem a valid token. Without an interaction channel, treat it as prohibited and emit a configuration warning.
+- `autonomous`: proceed if privacy and limits allow.
 5. Evaluate declared limits (profile limits plus active temporal value constraints) against service params.
 6. Return result with any warnings.
 
@@ -599,8 +383,8 @@ explanation = resolver.explain("light.bedroom_ceiling")
 # Host provides these lookups at initialisation
 resolver = InheritanceResolver(
     store=store,
-    get_entity_area=lambda entity_id: "bedroom",        # HA area registry ID
-    get_entity_domain=lambda entity_id: "light"          # return integration domain
+    get_entity_area=lambda entity_id: "bedroom",  # HA area registry ID
+    get_entity_domain=lambda entity_id: "light",  # return integration domain
 )
 ```
 
@@ -620,7 +404,7 @@ merged = resolver.merge(higher_authority_profile, lower_authority_profile)
 **Rules implemented:**
 
 - **Rule A:** `control_mode` tightening-only. `prohibited` > `confirm` > `autonomous` regardless of authority. Sole exception: an entity-level `user`-origin profile may loosen an inherited `confirm` to `autonomous` via `override_control_mode: true` with `control_reason`. `prohibited` and `read_only` never loosen.
-- **Rule B:** `triggers_automations: likely` sticky upward. `deployment_defined` at entity scope overrides.
+- **Rule B:** Select the trusted tier first; `likely` is sticky across scopes within that tier. Only a trusted entity declaration with a trusted override flag and `human_reason` can override broader `likely`. Inferred helpers are always coerced to `likely`.
 - **Rule C:** Privacy level most-restrictive-wins. `restricted` > `sensitive` > `normal` > `public`.
 - **Rule D:** Scope-then-origin for all other fields. Most specific scope wins (`entity` > `device` > `area` > `integration` > `domain`) among trusted origins (`developer`, `user`, `hybrid`); origin breaks scope ties. Hybrid trust is per field: a `hybrid` profile is trusted-tier only for the field paths in its `confirmed_fields`; its unconfirmed fields resolve in the lower tier as inferred (Rule 6). `inferred_ai` and `unknown`, and unconfirmed hybrid fields, never override trusted-tier declarations at any scope; among themselves the same scope-then-origin rule applies, with `inferred_ai` > `unknown`.
 - **Rule E:** Absence is not a conflict. Missing fields are inherited, not defaulted.
@@ -633,20 +417,17 @@ Evaluates temporal constraints against the current time, calendar state, and sol
 from mesa_core.temporal import TemporalEvaluator
 
 evaluator = TemporalEvaluator(
-    get_state=lambda entity_id: "on",       # callback: get current HA entity state
+    get_state=lambda entity_id: "on",  # callback: get current HA entity state
     get_calendar_events=lambda cal_id: [],  # callback: get active calendar events
-    get_solar_elevation=lambda at: -4.2,    # callback: sun elevation in degrees at `at`
+    get_solar_elevation=lambda at: -4.2,  # callback: sun elevation in degrees at `at`
 )
 
 # Returns a TemporalResult; the tightened boundaries are on .boundaries
-result = evaluator.apply(
-    boundaries=profile.operational_boundaries,
-    current_time=datetime.now()
-)
+result = evaluator.apply(boundaries=profile.operational_boundaries, current_time=datetime.now())
 modified_boundaries = result.boundaries
 result.active_constraint_ids  # constraints that applied
-result.active_limits          # limits contributed by those constraints
-result.warnings               # unevaluable conditions, treated as active
+result.active_limits  # limits contributed by those constraints
+result.warnings  # unevaluable conditions, treated as active
 ```
 
 **Condition types implemented:** `time_range`, `day_of_week`, `calendar_entity`, and (since 1.2) `solar_angle`. All condition types support the `negate` flag. `duration` and `relative_to_event` are v2 and fail closed.
@@ -669,7 +450,7 @@ issues = validator.validate(
             "id": "automation.occupancy_lights",
             "trigger": [{"platform": "state", "entity_id": "input_boolean.guest_mode"}],
             "condition": [],
-            "action": []
+            "action": [],
         }
     ]
 )
@@ -687,11 +468,11 @@ for issue in issues:
 @dataclass
 class ValidationIssue:
     entity_id: str
-    declared_value: str          # the current triggers_automations value
-    automation_id: str           # the automation referencing this entity
-    role: str                    # "trigger", "condition", or "action"
-    severity: str                # "warning" or "error"
-    recommendation: str          # human-readable corrective action
+    declared_value: str  # the current triggers_automations value
+    automation_id: str  # the automation referencing this entity
+    role: str  # "trigger", "condition", or "configuration"
+    severity: str  # "warning" or "error"
+    recommendation: str  # human-readable corrective action
 ```
 
 **TriggerValidator public API:**
@@ -701,12 +482,16 @@ class TriggerValidator:
     def __init__(
         self,
         store: ProfileStore,
-        expand_target: Optional[Callable[[str, str], List[str]]] = None
+        *,
+        expand_target: Optional[Callable[[str, str], List[str]]] = None,
+        resolver: Optional[InheritanceResolver] = None,
     ): ...
 
     def validate(
         self,
-        get_automation_configs: Callable[[], List[dict]]
+        get_automation_configs: Callable[[], List[dict]],
+        *,
+        entity_ids: Optional[Iterable[str]] = None,
     ) -> List[ValidationIssue]:
         """
         Cross-reference all profiles declaring triggers_automations: none
@@ -717,9 +502,7 @@ class TriggerValidator:
         ...
 
     def validate_entity(
-        self,
-        entity_id: str,
-        get_automation_configs: Callable[[], List[dict]]
+        self, entity_id: str, get_automation_configs: Callable[[], List[dict]]
     ) -> List[ValidationIssue]:
         """
         Validate a single entity against the automation registry.
@@ -756,11 +539,8 @@ enforcer = PrivacyEnforcer()
 decision = enforcer.evaluate(
     privacy=profile.privacy_classification,
     caller=CallerContext(
-        caller_id="user.guest_01",
-        roles=["guest"],
-        is_authenticated=True,
-        session_id="sess_abc"
-    )
+        caller_id="user.guest_01", roles=["guest"], is_authenticated=True, session_id="sess_abc"
+    ),
 )
 
 # decision.allowed: bool
@@ -790,14 +570,16 @@ Advisory coordination leases (Enrichment Section 21). Shipped in mesa-core v1.1.
 from mesa_core.lease import LeaseManager
 
 lease_manager = LeaseManager(
-    store,                        # optional: enables protected/critical denial (21.5)
-    get_state=my_ha_state_lookup, # optional: protected "while active" test
-    on_lease_event=fire_ha_event, # optional: receives mesa_lease_expired payloads
+    store,  # optional: enables protected/critical denial (21.5)
+    get_state=my_ha_state_lookup,  # optional: protected "while active" test
+    on_lease_event=fire_ha_event,  # optional: receives mesa_lease_expired payloads
 )
 
 response = lease_manager.request(
-    ["light.living_room", "light.hall"], 15,
-    session_id=ctx.session_id, caller_id=ctx.caller_id,
+    ["light.living_room", "light.hall"],
+    15,
+    session_id=ctx.session_id,
+    caller_id=ctx.caller_id,
     intent="movie night scene transition",
 )
 # response: lease_id, granted, entities_granted, entities_denied,
@@ -805,15 +587,15 @@ response = lease_manager.request(
 #           active_conflicts, warnings (Enrichment 21.3)
 
 lease_manager.release(response.lease_id, session_id=ctx.session_id)
-lease_manager.release_session(ctx.session_id)   # host session-teardown hook
-lease_manager.expire()                          # periodic sweep for timely events
-lease_manager.sensor_state()                    # binary_sensor.mesa_lease_active data
+lease_manager.release_session(ctx.session_id)  # host session-teardown hook
+lease_manager.expire()  # periodic sweep for timely events
+lease_manager.sensor_state()  # binary_sensor.mesa_lease_active data
 ```
 
 **Design properties:**
 
 - **In-memory only.** Leases (max 30 seconds, session-scoped) are never persisted; a restart terminates all sessions and therefore all leases. Persistence would resurrect stale locks.
-- **Lazy expiry.** An expired lease never grants anything, so correctness never depends on a background task, but removal and the `mesa_lease_expired` event happen only when a lifecycle operation sweeps: `request()`, `release()`, `release_session()`, `expire()`, and `sensor_state()` sweep, while `active_leases()` filters expired entries out of its result without removing them or emitting, so it stays a side-effect-free read. Hosts SHOULD therefore call `expire()` (or `aexpire()`) periodically so events fire close to `expires_at` rather than relying on reads to produce them, and SHOULD call `release_session()` on session termination (Enrichment 21.4).
+- **Lazy expiry.** An expired lease never grants anything, so correctness never depends on a background task, but removal and the `mesa_lease_expired` event happen only when a lifecycle operation sweeps: `request()`, `release()`, `release_session()`, `expire()`, and `sensor_state()` sweep, while `active_leases()` filters expired entries out of its result without removing them or emitting, so it stays a side-effect-free read. Hosts SHOULD therefore call `expire()` (or `aexpire()`) periodically so events fire close to `expires_at` rather than relying on reads to produce them, and MUST call `release_session()` on session termination (Enrichment 21.4).
 - **Existing holder wins.** Overlapping requests from another session are denied per entity (partial grants are valid). Multi-agent priority preemption (Enrichment 21.6) ships in v2; `caller_priority` is accepted but unused.
 - **Fail-closed automation checks.** Entities monitored by `protected` automations are denied while the automation is active; without a `get_state` callback the automation is treated as active. `critical` automation scope (trigger, condition, and affected entities) is denied unconditionally. `cooperative` and `assertive` automations surface in `active_conflicts`.
 - **Events via callback.** `on_lease_event` receives the Enrichment 21.4 payload (`lease_id`, `entities`, `reason`, `timestamp`) for every ended lease; the host bridges it onto the HA event bus as `mesa_lease_expired`.
@@ -827,16 +609,16 @@ Shipped in mesa-core v1.1. Every audit record mesa-core emits on the `mesa_core.
 ```python
 @dataclass
 class MesaAuditEvent:
-    event_type: str    # "privacy_access" | "enforcement_decision" | "lease"
-    action: str        # "access", the service called, or the lease operation
-    decision: str      # "allowed" | "denied" | "blocked" | "granted" | expiry reason
+    event_type: str  # "privacy_access" | "enforcement_decision" | "lease"
+    action: str  # "access", the service called, or the lease operation
+    decision: str  # "allowed" | "denied" | "blocked" | "granted" | expiry reason
     entity_id: Optional[str] = None
     caller_id: Optional[str] = None
     roles: List[str] = field(default_factory=list)
     profile_version: Optional[str] = None
     rule_applied: Optional[str] = None
     redaction_mode: Optional[str] = None
-    timestamp: str = ""                  # ISO 8601; stamped at emission
+    timestamp: str = ""  # ISO 8601; stamped at emission
     details: Dict[str, Any] = field(default_factory=dict)
 ```
 
@@ -851,7 +633,7 @@ Shipped in mesa-core 1.2. Moves complete profile sets between deployments, backe
 ```python
 from mesa_core import export_profiles, import_profiles
 
-archive = export_profiles(store)            # one JSON-serialisable dict
+archive = export_profiles(store)  # one JSON-serialisable dict
 result = import_profiles(other_store, archive, on_conflict="skip")
 # result: imported, overwritten, skipped_existing, invalid (key -> error), ok
 ```
@@ -860,8 +642,8 @@ The archive envelope (`mesa_export`) carries `format_version`, `exported_at`, `m
 
 **Design properties:**
 
-- **Export is faithful.** It reads raw stored documents through the backend with no validation and drops nothing; a backup is a backup, malformed entries included.
-- **Import validates.** Every document passes profile validation before writing; failures are quarantined in `ImportResult.invalid` and never written, so a corrupted or hostile archive cannot silently poison a store.
+- **Export is faithful.** It includes readable raw documents from the recognized namespaces, including structurally invalid profiles. Unreadable JSON is skipped and recorded in `unreadable_profiles`; export is not a byte-level filesystem backup.
+- **Import validates independently.** Import is not an archive-wide transaction. Every document passes profile validation before writing; failures are quarantined in `ImportResult.invalid` and never written, so a corrupted or hostile archive cannot silently poison a store.
 - **Conflicts are explicit.** `on_conflict="skip"` (default) preserves existing profiles, `"overwrite"` replaces them, and `"error"` raises before anything is written (all-or-nothing).
 
 Async variants: `aexport_profiles()`, `aimport_profiles()`.
@@ -883,11 +665,11 @@ store = ProfileStore(backend=SqliteBackend("/config/mesa/mesa.db"))
 
 register_mesa_tools(
     store=store,
-    adapter="fastmcp",          # "fastmcp" or "raw_sdk"
-    server=mcp_app,             # the host MCP server instance
-    enforcer=enforcer,          # accepted for API stability; registers no tools
-    lease_manager=lease_mgr,    # optional: enable lease tools (mesa-core 1.1+)
-    caller_context_fn=get_ctx   # optional: function returning CallerContext for current session
+    adapter="fastmcp",  # "fastmcp" or "raw_sdk"
+    server=mcp_app,  # the host MCP server instance
+    enforcer=enforcer,  # accepted for API stability; registers no tools
+    lease_manager=lease_mgr,  # optional: enable lease tools (mesa-core 1.1+)
+    caller_context_fn=get_ctx,  # optional: function returning CallerContext for current session
 )
 ```
 
@@ -897,39 +679,27 @@ Enforcement is not exposed as MCP tools: `MesaEnforcer` wraps the host's service
 
 **mesa_query_profiles**
 
-Input: domain filter, tag filter, area filter, device filter, integration filter, intents, min_origin_authority, include_inferred flag, include_fields, limit, cursor.
-Action: calls `store.query()` (passing the resolver), which applies filters against effective resolved profiles and returns paginated results; formats them into the response envelope.
-Output: results array, total_matched, pagination metadata, caller_context if available.
+Input: domain filter, tag filter, area filter, device filter, integration filter, intents, min_origin_authority, include_inferred flag, include_fields, limit, cursor. Action: calls `store.query()` (passing the resolver), which applies filters against effective resolved profiles and returns paginated results; formats them into the response envelope. Output: results array, total_matched, pagination metadata, caller_context if available.
 
 **mesa_get_profile**
 
-Input: entity_id, include_diagnostic flag, include_semantic_moments flag.
-Action: calls `store.get_effective()`, optionally fetches diagnostic profile; when `include_semantic_moments` is requested and the host supplies the `get_semantic_moments` callback, attaches the purpose-specific triggers and conditions (HA 2026.7+) the entity participates in.
-Output: complete resolved profile for the entity, staleness_status for inferred profiles, optional `semantic_moments` array (live HA introspection for agent context; never stored, never consulted by enforcement, and no more trustworthy than the integration that defined the moment).
+Input: entity_id, include_diagnostic flag, include_semantic_moments flag. Action: resolves through the store's shared resolver, optionally fetches diagnostic profile; when `include_semantic_moments` is requested and the host supplies the `get_semantic_moments` callback, attaches the purpose-specific triggers and conditions (HA 2026.7+) the entity participates in. Output: complete resolved profile for the entity, staleness_status for inferred profiles, optional `semantic_moments` array (live HA introspection for agent context; never stored, never consulted by enforcement, and no more trustworthy than the integration that defined the moment).
 
 **mesa_explain_profile**
 
-Input: entity_id, show_conflicts flag.
-Action: calls `resolver.explain()`, returns full inheritance resolution path.
-Output: explanation array showing which level contributed each field, origin, and whether any conflict rule was applied.
+Input: entity_id, show_conflicts flag. Action: calls `resolver.explain()`, returns full inheritance resolution path. Output: explanation array showing which level contributed each field, origin, and whether any conflict rule was applied.
 
 **mesa_request_lease**
 
-Input: entities array, duration_seconds, intent string, priority_level, caller_priority, preemption_handling.
-Action: calls `lease_manager.request()`, checks for conflicts with protected/critical automations, returns lease or denial.
-Output: lease_id, granted, entities_granted, entities_denied, denial_reasons, expires_at, active_conflicts.
+Input: entities array, duration_seconds, intent string, priority_level, caller_priority, preemption_handling. Action: calls `lease_manager.request()`, checks for conflicts with protected/critical automations, returns lease or denial. Output: lease_id, granted, entities_granted, entities_denied, denial_reasons, expires_at, active_conflicts.
 
 **mesa_release_lease**
 
-Input: lease_id.
-Action: calls `lease_manager.release()`.
-Output: confirmation.
+Input: lease_id. Action: calls `lease_manager.release()`. Output: confirmation.
 
 **mesa_get_caller_context**
 
-Input: none.
-Action: calls `caller_context_fn()` to retrieve session context.
-Output: CallerContext as dict.
+Input: none. Action: calls `caller_context_fn()` to retrieve session context. Output: CallerContext as dict.
 
 ---
 
@@ -937,20 +707,7 @@ Output: CallerContext as dict.
 
 ### 6.1 Minimal Integration (Level 1)
 
-Minimum code to reach MESA Level 1 conformance. Profiles are read from JSON files and the host server surfaces them to agents in its existing context payloads. No enforcement, no MESA-specific MCP tools required.
-
-```python
-from mesa_core import ProfileStore
-from mesa_core.backends import JsonFileBackend
-
-store = ProfileStore(backend=JsonFileBackend("/config/mesa/"))
-
-# In your existing tool handlers, enrich context with MESA profiles:
-profile = store.get_effective("light.living_room_ceiling")
-if profile:
-    # Include profile data in your tool response context
-    context["mesa_profile"] = profile.to_dict()
-```
+A minimal storage example is only one part of Level 1. The host must also respect provenance, control mode and privacy before surfacing profile data. Prefer the retrieval handlers, which already apply `deny_for` and response shaping. In custom handlers, call `PrivacyEnforcer.evaluate` with the resolved profile and current caller first; never expose a denied profile through a context payload.
 
 Level 1 does not require registering MESA MCP tools. It requires reading and respecting MESA profiles. To also expose MESA query tools to agents (enabling them to search profiles by tag, domain, or area), register the retrieval tools. This is recommended but not required for Level 1:
 
@@ -980,6 +737,7 @@ from mcp.server.fastmcp import FastMCP
 from typing import Any, Optional
 from datetime import datetime
 
+
 # Authentication is YOUR job, not mesa-core's: Specification 9.1 requires a
 # Level 3 server to reject unauthenticated requests with HA-equivalent
 # authentication, and mesa-core never sees your transport. Gate it at the
@@ -995,6 +753,7 @@ class HomeAssistantTokenVerifier(TokenVerifier):
         if user is None:
             return None
         return AccessToken(token=token, client_id=user.id, scopes=user.scopes)
+
 
 app = FastMCP(
     "my-ha-mcp-server",
@@ -1013,13 +772,12 @@ app = FastMCP(
 # Initialise storage
 store = ProfileStore(backend=SqliteBackend("/config/mesa/mesa.db"))
 
+
 # Initialise resolver with HA lookup callbacks. These callbacks let mesa-core
 # query HA for area and domain information. They are called synchronously, from
-# inside a worker thread on the async paths, so they must not be coroutines: a
-# coroutine object is not None, so an `async def` callback here would be used as
-# the lookup result itself and silently skip the device, area, integration, and
-# domain inheritance levels rather than raising. Cache the registry, or bridge with
-# asyncio.run_coroutine_threadsafe against your server's loop.
+# inside dedicated MESA policy workers on async paths. Wrong types and coroutine
+# results raise controlled host-callback errors. Cache the registry, or bridge
+# using asyncio.run_coroutine_threadsafe(coroutine(), loop).result(timeout=3).
 def get_entity_area(entity_id: str) -> Optional[str]:
     # EFFECTIVE area, not just the entity's own: an entity with no area_id of
     # its own inherits the area of the device that owns it, so check the
@@ -1034,16 +792,21 @@ def get_entity_area(entity_id: str) -> Optional[str]:
     device = device_registry.get(entry.device_id) if entry.device_id else None
     return device.area_id if device else None
 
+
 def get_entity_domain(entity_id: str) -> str:
     return entity_id.split(".")[0]
 
+
 def get_entity_device(entity_id: str) -> Optional[str]:
-    # entity registry entry -> device_id; None for entities owning no device
-    ...
+    entry = entity_registry.get(entity_id)
+    return entry.device_id if entry else None
+
 
 def get_entity_integration(entity_id: str) -> Optional[str]:
-    # entity registry entry -> config entry -> integration domain
-    ...
+    entry = entity_registry.get(entity_id)
+    config_entry = config_entries.get(entry.config_entry_id) if entry else None
+    return config_entry.domain if config_entry else None
+
 
 resolver = InheritanceResolver(
     store=store,
@@ -1056,7 +819,7 @@ resolver = InheritanceResolver(
     # (Specification 5.6). Both are also required by query(devices=...) and
     # query(integrations=...), which raise ValueError when they are absent.
     get_entity_device=get_entity_device,
-    get_entity_integration=get_entity_integration
+    get_entity_integration=get_entity_integration,
 )
 
 # Initialise enforcer
@@ -1067,6 +830,7 @@ enforcer = MesaEnforcer(store=store, resolver=resolver)
 # grants leases it should deny.
 lease_manager = LeaseManager(store)
 
+
 # Caller context function (host server provides this). mesa-core applies
 # access_roles before surfacing any profile, so without this the base privacy
 # level applies to every caller equally (Spec 7.2). By the time it runs the
@@ -1075,13 +839,15 @@ lease_manager = LeaseManager(store)
 # levels but gives access_roles nothing to isolate (Spec 3, caller identity
 # realism).
 def get_caller_context() -> CallerContext:
-    session = current_session()          # your transport's authenticated session
+    session = current_session()  # your transport's authenticated session
     return CallerContext(
         caller_id=session.user_id,
         roles=session.roles,
         is_authenticated=True,
         session_id=session.id,
+        session_started_at=session.started_at.isoformat(),
     )
+
 
 # Deployment facts the Spec 5.5 invalidation triggers are evaluated against.
 # Called once per entity, because integration_version means the version of the
@@ -1091,7 +857,7 @@ def get_caller_context() -> CallerContext:
 # Without this callback these triggers cannot be evaluated and an invalidated
 # profile keeps reporting staleness_status: current (Spec 5.4).
 # review_after_days needs nothing from the host.
-def get_validity_context(entity_id: str) -> dict:      # synchronous, like the resolver callbacks
+def get_validity_context(entity_id: str) -> dict:  # synchronous, like the resolver callbacks
     context = {
         # Must be COMPLETE: anything missing reads as a removed entity and
         # produces a false invalidation. Neither source alone is complete, so
@@ -1113,6 +879,7 @@ def get_validity_context(entity_id: str) -> dict:      # synchronous, like the r
         context["integration_version"] = version
     return context
 
+
 # Register all MESA tools
 register_mesa_tools(
     store=store,
@@ -1121,24 +888,19 @@ register_mesa_tools(
     enforcer=enforcer,
     lease_manager=lease_manager,
     caller_context_fn=get_caller_context,
-    get_validity_context=get_validity_context
+    get_validity_context=get_validity_context,
 )
 
 # Register the MESA-enforced service tool (see "The service tool" below).
 app.tool()(build_call_ha_service(enforcer, get_caller_context, perform_ha_call))
 ```
 
-**The service tool.** This is `examples/ha_service_tool.py` in full, embedded
-verbatim. The test suite imports that file, registers the tool against both
-supported FastMCP lineages, asserts its published schema, exercises the guard
-against every reserved target key, and covers the allowed, confirm, and
-prohibited paths; a further test executes the block below in an empty namespace
-and asserts this document matches the file. Copyable text that no test runs is
-how several enforcement gaps reached this project, so the two are one object.
+**The service tool.** This is `examples/ha_service_tool.py` in full, embedded verbatim. The test suite imports that file, registers the tool against both supported FastMCP lineages, asserts its published schema, exercises the guard against every reserved target key, and covers the allowed, confirm, and prohibited paths; a further test executes the block below in an empty namespace and asserts this document matches the file. Copyable text that no test runs is how several enforcement gaps reached this project, so the two are one object.
 
 ```python
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from datetime import datetime
@@ -1156,9 +918,7 @@ from mesa_core.privacy import CallerContext
 # an ordinary data field named `target` (`notify.notify` names its recipients
 # with it), so a tool spanning both shapes must route on the service's schema
 # and apply this only where an entity is the target.
-RESERVED_TARGET_KEYS: frozenset[str] = frozenset(
-    {"entity_id", "target", *HA_TARGET_SELECTOR_KEYS}
-)
+RESERVED_TARGET_KEYS: frozenset[str] = frozenset({"entity_id", "target", *HA_TARGET_SELECTOR_KEYS})
 
 
 def build_call_ha_service(
@@ -1181,6 +941,16 @@ def build_call_ha_service(
         # let a concurrent mutation forward a call that was never the one
         # evaluated. Check, evaluate, and execute must all see the same bytes.
         data = deepcopy(service_data or {})
+        domain, service, entity_id = (
+            value.strip().lower() for value in (domain, service, entity_id)
+        )
+        if (
+            re.fullmatch(r"[a-z_][a-z0-9_]*", domain) is None
+            or re.fullmatch(r"[a-z_][a-z0-9_]*", service) is None
+            or re.fullmatch(r"[a-z_][a-z0-9_]*\.[a-z0-9_]+", entity_id) is None
+            or entity_id.split(".", 1)[0] != domain
+        ):
+            raise MesaEnforcementError("service must target a valid entity in its own domain")
 
         # This tool is entity-targeted, so service data carries service data
         # only. Home Assistant also lets an action name its target as a device,
@@ -1211,6 +981,11 @@ def build_call_ha_service(
             confirmation_token=confirmation_token,
         )
         if not result.allowed:
+            if result.rule_applied == "privacy:deny_for":
+                if result.deny_response_mode == "omit":
+                    raise MesaEnforcementError("entity not found")
+                if result.deny_response_mode == "redact":
+                    raise MesaEnforcementError("access denied")
             if result.confirmation_challenge is not None:
                 # control_mode: confirm. Not a refusal: hand the challenge back
                 # to the agent, which shows the user what is about to happen and
@@ -1225,66 +1000,28 @@ def build_call_ha_service(
         return {"ok": True, "result": await perform_ha_call(domain, service, call_data)}
 
     return call_ha_service
-
-
-# Your Home Assistant client. mesa-core never calls HA itself.
-async def perform_ha_call(domain: str, service: str, data: dict[str, Any]) -> Any:
-    ...
 ```
 
-**Multi-target calls.** A MESA decision covers exactly the entity it was
-evaluated for. Home Assistant actions routinely target more than one, and
-Home Assistant itself recommends `device_id` for device-level actions and
-`config_entry_id` for config-entry-level ones, so this is ordinary integration
-work rather than an exotic case. `MesaEnforcer` refuses a call whose parameters
-carry an alternate target, because it cannot resolve a selector and must not
-approve a decision that would reach entities it never considered. The host owns
-that expansion:
+**Multi-target calls.** A MESA decision covers exactly the entity it was evaluated for. Home Assistant actions routinely target more than one, and Home Assistant itself recommends `device_id` for device-level actions and `config_entry_id` for config-entry-level ones, so this is ordinary integration work rather than an exotic case. `MesaEnforcer` refuses a call whose parameters carry an alternate target, because it cannot resolve a selector and must not approve a decision that would reach entities it never considered. The host owns that expansion:
 
 1. **Separate target from data.** Take `entity_id`, `device_id`, `area_id`,
-   `floor_id`, `label_id`, `config_entry_id`, and any nested `target` block out
-   of the service data. What remains is service data, and it is what carries the
-   parameters declared limits are written against.
+`floor_id`, `label_id`, `config_entry_id`, and any nested `target` block out of the service data. What remains is service data, and it is what carries the parameters declared limits are written against.
 2. **Expand every selector to entities** through the HA registries, the same
-   knowledge `expand_target` supplies to `TriggerValidator`. Remember that an
-   entity inherits its device's area, so an area selector reaches entities whose
-   own `area_id` is unset.
+knowledge `expand_target` supplies to `TriggerValidator`. Remember that an entity inherits its device's area, so an area selector reaches entities whose own `area_id` is unset.
 3. **Require the expansion to be complete, and deny otherwise.** Home
-   Assistant's target extraction reports what it could not resolve alongside
-   what it could. Treat a failed expansion, an unknown device, area, floor,
-   label, or config entry, or an empty resolved set as a denial. An empty set is
-   the trap: "every decision allowed" is vacuously true of no decisions, so an
-   unresolvable target would otherwise read as approval.
+Assistant's target extraction reports what it could not resolve alongside what it could. Treat a failed expansion, an unknown device, area, floor, label, or config entry, or an empty resolved set as a denial. An empty set is the trap: "every decision allowed" is vacuously true of no decisions, so an unresolvable target would otherwise read as approval.
 4. **Evaluate each resolved entity** with the shared service data. Policy
-   differs per entity: a `light.turn_on` across an area may be autonomous for
-   most lights and `confirm` or `prohibited` for one.
+differs per entity: a `light.turn_on` across an area may be autonomous for most lights and `confirm` or `prohibited` for one.
 5. **Require every decision to allow before acting.** A partial call is the
-   dangerous outcome: it executes against the permitted entities and leaves the
-   agent believing the whole action succeeded. Deny the action and report which
-   entities blocked it.
+dangerous outcome: it executes against the permitted entities and leaves the agent believing the whole action succeeded. Deny the action and report which entities blocked it.
 6. **Execute against the frozen set you evaluated,** listing those entity IDs
-   explicitly. Forwarding the original area or label selector to Home Assistant
-   reopens the gap between check and execution: membership can change in
-   between, and the call would reach entities no decision covered.
+explicitly. Forwarding the original area or label selector to Home Assistant reopens the gap between check and execution: membership can change in between, and the call would reach entities no decision covered.
 7. **Confirm per entity.** Each `confirm` entity produces its own challenge
-   bound to its own parameters, and each token is single-use and matched against
-   exactly the entity, service, and parameters challenged. Present them together
-   if you like, but resubmit each with its own token; there is no token that
-   approves a group.
+bound to its own parameters, and each token is single-use and matched against exactly the entity, service, and parameters challenged. Present them together if you like, but resubmit each with its own token; there is no token that approves a group.
 
-**Actions with no entity representation.** Some device-level and
-config-entry-level actions genuinely address no entity, and enforcement has no
-answer for them. Be precise about why, because MESA 1.1 does have device-scoped
-profiles: a device profile is resolved through inheritance and governs the
-entities that device owns, so it already shapes enforcement for every one of
-them. What it does not do is give `MesaEnforcer` a way to decide a call that
-names a device or config entry and no entity at all. Enforcement evaluates one
-entity, and there is no entity here to evaluate.
+**Actions with no entity representation.** Some device-level and config-entry-level actions genuinely address no entity, and enforcement has no answer for them. Be precise about why, because MESA 1.1 does have device-scoped profiles: a device profile is resolved through inheritance and governs the entities that device owns, so it already shapes enforcement for every one of them. What it does not do is give `MesaEnforcer` a way to decide a call that names a device or config entry and no entity at all. Enforcement evaluates one entity, and there is no entity here to evaluate.
 
-Deny such calls at the MESA boundary and gate them with your own authorisation,
-rather than expanding them to an empty entity set and reading that as approval.
-Direct enforcement of entityless targets may come in a later version; until it
-does, silence is not permission.
+Deny such calls at the MESA boundary and gate them with your own authorisation, rather than expanding them to an empty entity set and reading that as approval. Direct enforcement of entityless targets may come in a later version; until it does, silence is not permission.
 
 ### 6.3 Framework Adapters
 
@@ -1299,6 +1036,7 @@ mesa-core provides adapters for the two most common MCP Python frameworks.
 ```python
 from mesa_core.mcp.adapters import ToolHandler, ToolRegistry
 
+
 class MyFrameworkRegistry:
     def register_tool(
         self, name: str, handler: ToolHandler, schema: dict, description: str
@@ -1306,19 +1044,13 @@ class MyFrameworkRegistry:
         # register into your framework's tool system
         ...
 
+
 register_mesa_tools(store=store, adapter=MyFrameworkRegistry(), server=app)
 ```
 
-Import both names. Python evaluates annotations eagerly before 3.14, so
-annotating `handler` with a `ToolHandler` you did not import raises
-`NameError` at class definition time on the 3.12 and 3.13 interpreters this
-package supports (3.14 defers annotation evaluation, so it does not raise
-there: an example that works on your interpreter can still break a user's).
+Import both names. Python evaluates annotations eagerly before 3.14, so annotating `handler` with a `ToolHandler` you did not import raises `NameError` at class definition time on the 3.12 and 3.13 interpreters this package supports (3.14 defers annotation evaluation, so it does not raise there: an example that works on your interpreter can still break a user's).
 
-All four parameters are required: `register_mesa_tools` passes the tool's
-description positionally alongside its schema, so a `register_tool` accepting
-only three raises `TypeError`. `handler` is a `ToolHandler`, an async callable
-taking the parsed parameter dict and returning the response dict.
+All four parameters are required: `register_mesa_tools` passes the tool's description positionally alongside its schema, so a `register_tool` accepting only three raises `TypeError`. `handler` is a `ToolHandler`, an async callable taking the parsed parameter dict and returning the response dict.
 
 ---
 
@@ -1358,27 +1090,13 @@ pytest tests/conformance/ -v
 
 The conformance suite runs from a source checkout. The `tests/` directory is not shipped inside the installed package.
 
-### 7.2 Test Categories
+### 7.2 Test Coverage
 
-**Kernel field validation (`test_kernel.py`).** Verifies that profiles missing required kernel fields are correctly identified. Tests that absent `control_mode` defaults to `confirm`. Tests that absent `triggers_automations` defaults to `unknown`. Tests that absent `metadata_origin` defaults to `source: unknown`, and to `source: developer` when loaded via `import_from_integration()`. Tests each valid enum value for each kernel field.
-
-**Control mode (`test_control_mode.py`).** Tests that `prohibited` blocks service calls in enforced mode. Tests that `read_only` blocks write calls regardless of enforcement mode. Tests that `confirm` generates a warning but does not block in advisory mode. Tests that `confirm` is treated as `prohibited` when no interaction channel is present. Tests the tightening-only precedence rule. Tests the operator loosening override: an entity-level `user`-origin profile with `override_control_mode: true` loosens an inherited `confirm`; the override is rejected from `inferred_ai` origin, rejected without `control_reason`, and rejected against `prohibited` or `read_only`. Tests that `control_reason` is surfaced in enforcement error messages. Tests the confirmation round-trip in enforced mode: first call denied with a challenge; re-submission with a valid token allowed; expired, reused, or parameter-mismatched tokens rejected.
-
-**Profile inheritance (`test_inheritance.py`).** Tests multi-level inheritance with no conflicts. Tests domain-level default applied to entity with no entity-level profile. Tests area-level override of domain-level default. Tests entity-level override of area-level profile. Tests `triggers_automations: likely` stickiness across levels (a lower-level `none` does not override a higher-level `likely`). Tests `deployment_defined` entity-level override. Tests `none` is overridden by `likely` from any level.
-
-**Trigger validation (`test_trigger_validator.py`).** Tests that an entity declared `triggers_automations: none` is flagged when found in an automation trigger block. Tests that an entity declared `none` is flagged when found in an automation condition block. Tests that an entity declared `likely` generates no issue even when found in automations. Tests that an entity with no profile generates no false positive. Tests that validation results include correct `automation_id`, `role`, and `recommendation` fields. Tests the single-entity validation path via `validate_entity()`.
-
-**Conflict resolution (`test_conflict.py`).** Tests Rules A through E from Specification Section 5.7. Each rule has at least three test cases: basic application, edge case, and conflict with another rule. Rule D cases include: a `user` entity-level profile overriding a `developer` domain-level default; an `inferred_ai` entity-level profile failing to override a `developer` domain-level declaration; and resolution among lower-tier profiles when no trusted-tier profile declares the field.
-
-**Temporal constraints (`test_temporal.py`).** Tests `time_range` condition across midnight boundary. Tests `day_of_week` with single day and multiple days. Tests `calendar_entity` with active and inactive calendar events. Tests `negate: true` inversion for each condition type. Tests that temporal constraints correctly modify `control_mode` and `max_value`. Tests that an effect attempting to loosen `control_mode` below the effective base is ignored and surfaces a warning. Tests that unevaluable conditions (missing or `unavailable` entity) apply the effect, with and without `negate`.
-
-**Privacy enforcement (`test_privacy.py`).** Tests `deny_for` role blocks access. Tests `unrestricted_for` role bypasses sensitive level restrictions. Tests unauthenticated caller treated as no-role. Tests `is_minor: true` triggers `restricted` regardless of declared level. Tests that denials surface `deny_response_mode` so the host can apply `omit`, `redact`, or `error` response shaping.
-
-**Inferred profile rules (`test_inferred.py`).** Tests that `inferred_ai` profiles missing `confidence` are malformed. Tests that `inferred_ai` profiles missing `generated_at` are malformed. Tests that `confidence >= 0.7` allows use for non-safety decisions. Tests that `control_mode` from inferred profiles only applies when it tightens. Tests that helper-domain inferred profiles default `triggers_automations` to `likely`. Tests staleness status computation at day 0, day 30, and day 61.
+The maintained inventory is [tests/conformance](../tests/conformance), [tests/integration](../tests/integration), and the regression modules under [tests](../tests). It includes validation/schema agreement, field presence, all baseline domains, Rules A-E, provenance, privacy, confirmation binding and contention, temporal boundaries, backend overwrite/lifecycle behavior, portability, leases, triggers, and both SDK generations. The integration suite exercises published schemas and real HTTP calls. Optional dependency tests skip explicitly when their framework is unavailable. High coverage is not proof of correctness; deterministic behavioral witnesses accompany safety changes.
 
 ### 7.3 Malformed Profile Fixtures
 
-The `tests/conformance/malformed/` directory contains 43 JSON fixtures: 42 MUST be rejected and `trust_laundering.json` MUST produce an advisory warning. The five original cases below illustrate the distinction; the directory and its parametrised tests are the complete inventory.
+The `tests/conformance/malformed/` directory contains malformed and forward-compatible JSON fixtures. The parametrised test identifies hard errors; `trust_laundering.json` is advisory and unknown `access_roles` extensions are accepted. The five original cases below illustrate the distinction; the directory and its parametrised tests are the complete inventory.
 
 **missing_confidence.json.** An `inferred_ai` profile without a `confidence` field.
 
@@ -1422,7 +1140,7 @@ mesa-core 1.x supplies profile storage, resolution, retrieval, enforcement, and 
 
 **MCP tools.** `mesa_query_profiles` with full filtering and pagination. `mesa_get_profile`. `mesa_explain_profile`. `mesa_get_caller_context` (returns the host-provided caller context; required for Level 3). Adapters for FastMCP and raw MCP Python SDK.
 
-**Conformance test suite.** All seven test categories. 42 hard-error fixtures and one warning-only fixture.
+**Conformance test suite.** The maintained inventory and coverage are described in Section 7.
 
 ### Added in Version 1.1
 
@@ -1494,7 +1212,7 @@ mesa-core is a Python library for MCP server developers. It is distributed via P
 ```bash
 # Install in your development environment
 pip install mesa-core           # SQLite backend included (stdlib sqlite3)
-pip install mesa-core[test]     # with test suite
+pip install mesa-core[test]     # test dependencies; obtain tests from source checkout/sdist
 
 # Add as a dependency in your server's pyproject.toml
 # [project]
@@ -1554,14 +1272,11 @@ SqliteBackend uses the standard library `sqlite3` module; async access is provid
 | Diagnostic profile | Object only; contents preserved |
 | Other core/enrichment fields and vendor extensions | Preserved without comprehensive structural validation; lease consumers check priority and scope defensively |
 
-Schema agreement covers structural checks, not semantic ID uniqueness or advisory warnings.
-JSON backend replacement is atomic per file: readers see the old or new complete document.
-The temporary file is flushed and fsynced before replacement; directory fsync, power-loss
-durability, multi-file transactions, and cross-process write ordering are not guaranteed.
+Schema agreement covers structural checks, not semantic ID uniqueness or advisory warnings. JSON backend replacement is atomic per file: readers see the old or new complete document. The temporary file is flushed and fsynced before replacement; directory fsync, power-loss durability, multi-file transactions, and cross-process write ordering are not guaranteed.
 
 Malformed automation policies, including invalid inherited layers, conservatively deny all requested leases because their protection scope cannot be established. Query candidates are resolved before pagination: malformed effective profiles are skipped with warnings and excluded from result counts and cursor offsets. This requires resolving every candidate surviving the inexpensive filters, including for an unfiltered query. Integration sidecars are read as UTF-8; malformed encoding or JSON raises `MesaValidationError`, while filesystem access errors remain distinguishable.
 
-The asynchronous MCP query, get, and explain handlers offload storage and resolution to worker threads. Synchronous registry, validity-context, and semantic-moment callbacks on these paths also run in workers and may bridge to the server loop using `asyncio.run_coroutine_threadsafe`. Caller-context lookup and privacy decisions stay on the request thread; context variables propagate to workers. Caller-context callbacks must return promptly from cached request identity and must not synchronously wait on their own event loop.
+The asynchronous MCP query, get, and explain handlers offload storage and resolution to worker threads. Synchronous registry, validity-context, and semantic-moment callbacks on these paths also run in dedicated MESA workers, isolated from the event loop default executor and may bridge to the server loop using `asyncio.run_coroutine_threadsafe`. Caller-context lookup and privacy decisions stay on the request thread; context variables propagate to workers. Caller context is captured and copied once before any policy await. Caller-context and semantic-moment callbacks may be async; synchronous caller callbacks must return promptly without blocking their own event loop.
 
 Calendar callbacks must return a list of events: `[]` means a valid empty calendar, while a wrong-typed result or exception is unevaluable and keeps constraints active regardless of negation. Numeric enforcement preserves integer precision through decimal comparisons, with the existing finite-float range check defining when an operand is unevaluable. Automation reference traversal rejects cyclic configurations with `MesaValidationError` and accepts shared acyclic aliases.
 
@@ -1569,6 +1284,19 @@ Calendar callbacks must return a list of events: `[]` means a valid empty calend
 
 FastMCP 4.0.5 with MCP SDK 2.2.0 passes the core suite on Python 3.12, 3.13, and 3.14. MESA's standalone adapter uses the unchanged `tool` decorator API. The raw SDK adapter selects SDK v1 decorators or SDK v2's public `add_request_handler` API and result wrappers. The `fastmcp` and `mcp` extras can be installed together; the resolver selects the SDK major required by the chosen FastMCP release.
 
-FastMCP 4.0.0–4.0.4 are excluded: 4.0.5 restores field-level strict validation used by MESA's boolean, integer, and numeric arguments. FastMCP 2.12.0 and 3.4.7 remain regression targets. CI tests 3.4.7 and 4.0.5 on every supported Python and the oldest supported release separately. Integration coverage includes schemas, malformed argument rejection, the documented confirmation wrapper, and all six registered MESA tools over real Streamable HTTP. SDK-v1-only host tests are skipped when SDK v2 is installed, not counted as FastMCP 4 coverage.
+FastMCP 4.0.0-4.0.4 are excluded: 4.0.5 restores field-level strict validation used by MESA's boolean, integer, and numeric arguments. FastMCP 2.12.0 and 3.4.7 remain regression targets. CI tests 3.4.7 and 4.0.5 on every supported Python and the oldest supported release separately. Integration coverage includes schemas, malformed argument rejection, the documented confirmation wrapper, and all six registered MESA tools over real Streamable HTTP. SDK-v1-only host tests are skipped when SDK v2 is installed, not counted as FastMCP 4 coverage.
 
 MESA does not depend on FastMCP sampling, elicitation, background tasks, or other server-to-client callbacks removed or changed by the sessionless protocol. Host applications using those features must separately follow the [FastMCP 4 migration guide](https://gofastmcp.com/getting-started/upgrading/from-fastmcp-3). Compatibility here covers MESA's implemented tools and enforcement wrapper, not every feature an embedding host might add.
+
+### October 2026 behavior clarifications
+
+- `time_range` includes its start and excludes its end, supports midnight crossing, and treats equal bounds as a full day. Temporal evaluation uses the timezone of the supplied datetime; omitted time uses the host local clock. Supply an aware deployment-local time for predictable scheduling. `EnforcementResult` carries active temporal IDs and human reasons on allowed and blocked calls.
+- `read_only` and `prohibited` share enforcement behavior. A non-interactive `confirm` is treated as prohibited with a warning. Advisory mode warns and allows; enforced mode blocks.
+- Trusted `deny_for` and `restricted_for` are unioned across layers. Trusted `is_minor: true` cannot be cleared by a narrower profile. Rule 3 still excludes unconfirmed inferred role lists, minor status and denial response mode from access decisions; Rule C independently permits an inferred level to tighten privacy.
+- A lease requires a nonempty session ID. Durations are at least 0.001 seconds; values above 30 are clamped with a warning. A wholly denied response expires immediately with duration zero. Same-session refresh remains permitted by the advisory protocol. A manager without a store warns that automation protection is unavailable; all actual host deployments should supply the shared store/resolver. Missing priority is protected, unusable state is active, and protected policy with no usable scope conservatively covers all requested entities. Natural-expiry events use the actual expiry time. Host event or logging failures cannot prevent teardown.
+- MCP query counts, offsets and cursors are computed after access shaping. Cursors bind filters, caller identity and visible effective rows; hidden-only changes do not expose their existence. An empty filter selects no rows; an empty cursor is invalid. Limits accept mathematically integral JSON numbers such as `50.0`. Local query diagnostics remain available, while wire responses suppress warnings about inaccessible/corrupt rows.
+- Raw SDK handlers compose with host tools in either registration order. MESA handler validation uses the Section 9.6 envelope; FastMCP can reject schema-invalid calls before handler dispatch using its standard MCP tool errors. This corrects the overly broad 1.3.1 transport-envelope claim. Published defaults always satisfy their schemas.
+- `ha_condition`, `duration`, and `relative_to_event` currently stay active with warnings because the library cannot evaluate them. Native HA evaluation, voice-satellite guest fallback, authentication, state snapshots and semantic-moment policy interpretation remain host responsibilities. Inferred query rows are opt-in and carry their provenance individually; they are not placed in a separate result array.
+- The lease scope reader consumes `environmental_dependencies.trigger_entities`, `environmental_dependencies.condition_entities`, and, for critical automations, `intent_archetype.affected_entities`. Other proposed Section 11 containers do not imply lease scope. `TriggerValidator` checks explicit references, comma-separated/case-normalised IDs and zone triggers, and reports incomplete template/blueprint coverage. `deployment_defined` without `helper_traits.affected_automations` is cross-checked like `none`.
+- Version pins in `profile_valid_for` are exact strings, including patch versions. `person_traits.household_role` is descriptive metadata; it does not assign authenticated caller roles. Hosts explicitly map `regular_guest` to `guest` if that is their identity policy.
+- JSON filenames encode uppercase ASCII to preserve distinct scope names on case-insensitive volumes. Legacy exact-case filenames remain readable and migrate on write. Conflicting legacy/canonical copies fail explicitly. New files use 0600; replacement preserves existing permissions. SQLite retains one synchronized connection, supports `:memory:`, and exposes `close()` and context-manager cleanup.

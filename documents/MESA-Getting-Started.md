@@ -1,7 +1,5 @@
 # MESA Getting Started Guide
-**Version:** 1.1
-**Describes:** MESA 1.1
-**Document Type:** Practical Implementation Guide
+**Version:** 1.1 **Describes:** MESA 1.1 **Document Type:** Practical Implementation Guide
 
 ---
 
@@ -20,22 +18,11 @@ By the end of this guide you will have added a valid MESA profile to at least on
 1. [Start Here: The Seven Fields](#1-start-here-the-seven-fields)
 2. [JSON or YAML: Which One Do I Use?](#2-json-or-yaml-which-one-do-i-use)
 3. [Pick Your Path](#3-pick-your-path)
-   - 3.1 [I want to add MESA to my MCP server](#31-i-want-to-add-mesa-to-my-mcp-server)
-   - 3.2 [I have a custom integration on HACS](#32-i-have-a-custom-integration-on-hacs)
-   - 3.3 [I am an operator who wants better agent behaviour](#33-i-am-an-operator-who-wants-better-agent-behaviour)
-   - 3.4 [I am building a production integration](#34-i-am-building-a-production-integration)
+- 3.1 [I want to add MESA to my MCP server](#31-i-want-to-add-mesa-to-my-mcp-server) - 3.2 [I have a custom integration on HACS](#32-i-have-a-custom-integration-on-hacs) - 3.3 [I am an operator who wants better agent behaviour](#33-i-am-an-operator-who-wants-better-agent-behaviour) - 3.4 [I am building a production integration](#34-i-am-building-a-production-integration)
 4. [Use AI to Write Your Profile](#4-use-ai-to-write-your-profile)
-   - 4.1 [For integration developers](#41-for-integration-developers)
-   - 4.2 [For operators](#42-for-operators)
-   - 4.3 [For diagnostic profiles](#43-for-diagnostic-profiles)
-   - 4.4 [Reviewing what the AI generates](#44-reviewing-what-the-ai-generates)
+- 4.1 [For integration developers](#41-for-integration-developers) - 4.2 [For operators](#42-for-operators) - 4.3 [For diagnostic profiles](#43-for-diagnostic-profiles) - 4.4 [Reviewing what the AI generates](#44-reviewing-what-the-ai-generates)
 5. [Worked Examples](#5-worked-examples)
-   - 5.1 [A simple RGB light integration](#51-a-simple-rgb-light-integration)
-   - 5.2 [A critical mode flag helper](#52-a-critical-mode-flag-helper)
-   - 5.3 [A custom diagnostic sensor](#53-a-custom-diagnostic-sensor)
-   - 5.4 [A cloud TTS integration with dual connection modes](#54-a-cloud-tts-integration-with-dual-connection-modes)
-   - 5.5 [An operator-added entity profile](#55-an-operator-added-entity-profile)
-   - 5.6 [A device-scope profile for a camera](#56-a-device-scope-profile-for-a-camera)
+- 5.1 [A simple RGB light integration](#51-a-simple-rgb-light-integration) - 5.2 [A critical mode flag helper](#52-a-critical-mode-flag-helper) - 5.3 [A custom diagnostic sensor](#53-a-custom-diagnostic-sensor) - 5.4 [A cloud TTS integration with dual connection modes](#54-a-cloud-tts-integration-with-dual-connection-modes) - 5.5 [An operator-added entity profile](#55-an-operator-added-entity-profile) - 5.6 [A device-scope profile for a camera](#56-a-device-scope-profile-for-a-camera)
 6. [Choosing Semantic Tags](#6-choosing-semantic-tags)
 7. [What Good Enough Looks Like](#7-what-good-enough-looks-like)
 8. [Common Mistakes](#8-common-mistakes)
@@ -197,7 +184,7 @@ from mesa_core.exceptions import MesaEnforcementError
 
 enforcer = MesaEnforcer(store)
 
-# Before passing any service call to HA. Two details matter:
+# Before passing any service call to HA. Three details matter:
 #  - `service` is the canonical "domain.service", e.g. "media_player.volume_set".
 #  - `service_params` must be the REAL parameters of the call. A declared limit
 #    whose parameter is missing from service_params is skipped, so passing
@@ -212,7 +199,7 @@ result = enforcer.evaluate(
     service=f"{domain}.{service}",
     service_params={**service_params, "entity_id": entity_id},
     caller_context=caller_ctx,
-    current_time=datetime.now()
+    current_time=datetime.now(),
 )
 if not result.allowed:
     if result.confirmation_challenge is not None:
@@ -226,6 +213,20 @@ if not result.allowed:
 # proceed with service call
 ```
 
+The host constructs this token only after authentic human approval; do not accept an agent's claim that approval occurred:
+
+```python
+from datetime import UTC, datetime
+
+approved_token = {
+    "challenge_id": result.confirmation_challenge["challenge_id"],
+    "approved_by": authenticated_user_id,
+    "approved_at": datetime.now(UTC).isoformat(),
+}
+```
+
+The challenge is bound to the same entity, canonical service and exact parameters, is single-use, and expires within 120 seconds.
+
 The resubmitted call is the same call plus the approved token:
 
 ```python
@@ -235,14 +236,11 @@ result = enforcer.evaluate(
     service_params={**service_params, "entity_id": entity_id},
     caller_context=caller_ctx,
     current_time=datetime.now(),
-    confirmation_token=approved_token,      # the dict from the approved challenge
+    confirmation_token=approved_token,  # the dict from the approved challenge
 )
 ```
 
-The enforcer verifies the round-trip and that the parameters still match the
-ones the user approved, so a token cannot be replayed against a different call
-(Specification 6.6). See the Module Proposal for the full challenge and token
-shapes.
+The enforcer verifies the round-trip and that the parameters still match the ones the user approved, so a token cannot be replayed against a different call (Specification 6.6). See the Module Proposal for the full challenge and token shapes.
 
 **Step 4: Declare your conformance level.**
 
@@ -1092,26 +1090,19 @@ Start at the top. Add downward when you observe agent behaviour that could be be
 
 ## 8. Common Mistakes
 
-**Setting `control_mode: autonomous` everywhere to avoid confirmation dialogs.**
-This defeats the safety purpose. Mark entities correctly. If the agent asking for confirmation is annoying, configure the agent's confirmation threshold, not the profile.
+**Setting `control_mode: autonomous` everywhere to avoid confirmation dialogs.** This defeats the safety purpose. Mark entities correctly. If the agent asking for confirmation is annoying, configure the agent's confirmation threshold, not the profile.
 
-**Marking irreversible actions as `reversible: true`.**
-Sending notifications, firing webhooks, resetting counters, making one-shot API calls: none of these are reversible. Mark them `false`.
+**Marking irreversible actions as `reversible: true`.** Sending notifications, firing webhooks, resetting counters, making one-shot API calls: none of these are reversible. Mark them `false`.
 
-**Using subjective tags that are not in the vocabulary.**
-Tags like `lighting.cozy` or `security.important` are not canonical and will not be interpreted consistently. Use canonical tags. Use vendor namespaces for specifics. Use `human_reason` prose fields for subjective descriptions.
+**Using subjective tags that are not in the vocabulary.** Tags like `lighting.cozy` or `security.important` are not canonical and will not be interpreted consistently. Use canonical tags. Use vendor namespaces for specifics. Use `human_reason` prose fields for subjective descriptions.
 
-**Writing profiles that describe what you wish were true.**
-If your integration requires cloud connectivity, `network_dependency` must be `cloud_required`. Fix the integration rather than misrepresenting it.
+**Writing profiles that describe what you wish were true.** If your integration requires cloud connectivity, `network_dependency` must be `cloud_required`. Fix the integration rather than misrepresenting it.
 
-**Omitting `metadata_origin` when it matters.**
-A profile shipped in an integration's `mesa_profile.json` defaults to `source: developer` when the field is absent, which is only correct if you wrote the profile yourself. If an AI assistant generated any part of it, the default misrepresents provenance: declare `source: hybrid` or `source: inferred_ai` explicitly. Profiles stored anywhere else are treated as `unknown` without `metadata_origin` and trusted no more than an unreviewed AI guess. Include it.
+**Omitting `metadata_origin` when it matters.** A profile shipped in an integration's `mesa_profile.json` defaults to `source: developer` when the field is absent, which is only correct if you wrote the profile yourself. If an AI assistant generated any part of it, the default misrepresents provenance: declare `source: hybrid` or `source: inferred_ai` explicitly. Profiles stored anywhere else are treated as `unknown` without `metadata_origin` and trusted no more than an unreviewed AI guess. Include it.
 
-**Using long-form predicate operators.**
-Use `eq`, not `equals`. Use `gt`, not `greater_than`. Unrecognised tokens must be rejected by conforming implementations.
+**Using long-form predicate operators.** Use `eq`, not `equals`. Use `gt`, not `greater_than`. Unrecognised tokens must be rejected by conforming implementations.
 
-**Leaving mode flag helpers unprofiled.**
-These are the highest-impact entities in most deployments. If you profile nothing else, profile your mode flags.
+**Leaving mode flag helpers unprofiled.** These are the highest-impact entities in most deployments. If you profile nothing else, profile your mode flags.
 
 ---
 
@@ -1138,7 +1129,7 @@ Check for:
 Report any issues and suggest corrections.
 ```
 
-**What a future linter should check:**
+**Shipped linter checks (mesa-lint 0.2.2):**
 - All required fields present for declared `metadata_origin.source`.
 - `confidence` and `generated_at` present for `inferred_ai` profiles.
 - All predicate operators canonical or HA native syntax.
@@ -1195,7 +1186,9 @@ from mesa_core import TriggerValidator
 validator = TriggerValidator(store=store)
 issues = validator.validate(get_automation_configs=ha_client.get_automations)
 for issue in issues:
-    print(f"WARNING: {issue.entity_id} declared none but found in {issue.automation_id} as {issue.role}")
+    print(
+        f"WARNING: {issue.entity_id} declared none but found in {issue.automation_id} as {issue.role}"
+    )
 ```
 
 **`mesa-lint`. Shipped** (`pip install mesa-lint`, https://github.com/leecaochang/mesa-lint). A CI-friendly CLI that validates MESA profile documents with mesa-core's own validator, so the linter and the library agree on what is malformed by construction: schema violations, invalid enum values, malformed inferred profiles (missing `confidence` or `generated_at`), non-canonical predicate operator tokens, and tag format. On top of validation it adds deployment lint rules:
@@ -1209,7 +1202,7 @@ for issue in issues:
 
 It exits nonzero on findings, so it slots into CI directly. A GitHub Action wrapper and further rules (kernel-field completeness, `autonomous` on security domains, `reversible: true` on notification entities) are roadmap items, not shipped checks.
 
-**Profile inheritance debugger.** The `mesa_explain_profile` tool (defined in the Specification Section 9.5) returns the full inheritance resolution path for any entity, showing which profile level contributed each effective field (including the `device` level as of MESA 1.1) and whether any conflict resolution rule was applied. When an agent refuses an action and you cannot tell why, this is the first tool to reach for. MCP servers running mesa-core implementing Level 3 SHOULD expose this tool.
+**Profile inheritance debugger.** The `mesa_explain_profile` tool (defined in the Specification Section 9.5) returns the full inheritance resolution path for any entity, showing which profile level contributed each effective field (including the `device` level as of MESA 1.1) and whether any conflict resolution rule was applied. When an agent refuses an action and you cannot tell why, this is the first tool to reach for. MCP servers running mesa-core implementing Level 3 MUST expose this tool.
 
 **Reference profiles for common domains.** Ten well-authored example profiles covering `light`, `climate`, `lock`, `camera`, `media_player`, `cover`, `switch`, `sensor`, `binary_sensor`, and `alarm_control_panel`. Developers can copy and adapt these rather than starting from scratch.
 

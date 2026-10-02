@@ -367,7 +367,7 @@ def test_store_explain_delegates_to_resolver() -> None:
 def test_stored_document_matches_fixture_round_trip(tmp_path: Path) -> None:
     # A profile loaded from a fixture and stored must round-trip byte-identically
     # at the document level (unknown fields preserved).
-    data = json.loads((FIXTURES / "helper_mode_flag.json").read_text())
+    data = json.loads((FIXTURES / "helper_mode_flag.json").read_text(encoding="utf-8"))
     profile = SemanticProfile.from_dict("input_boolean.guest_mode", data)
     store = ProfileStore(backend=JsonFileBackend(tmp_path))
     store.set("input_boolean.guest_mode", profile)

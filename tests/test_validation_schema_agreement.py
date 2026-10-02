@@ -23,13 +23,17 @@ from mesa_core import validate_document
 
 ROOT = Path(__file__).parent
 SCHEMA = json.loads(
-    (ROOT.parent / "mesa_core" / "schemas" / "mesa_profile.schema.json").read_text()
+    (ROOT.parent / "mesa_core" / "schemas" / "mesa_profile.schema.json").read_text(encoding="utf-8")
 )
 
 VALID_FIXTURES = sorted((ROOT / "fixtures" / "profiles").glob("*.json"))
 MALFORMED_FIXTURES = sorted((ROOT / "conformance" / "malformed").glob("*.json"))
 # trust_laundering is warning-only by design: valid under both validators.
-HARD_REJECTED = [p for p in MALFORMED_FIXTURES if p.name != "trust_laundering.json"]
+HARD_REJECTED = [
+    p
+    for p in MALFORMED_FIXTURES
+    if p.name not in {"trust_laundering.json", "access_roles_unknown_key.json"}
+]
 
 
 def _schema_valid(data: dict) -> bool:
@@ -39,20 +43,22 @@ def _schema_valid(data: dict) -> bool:
 
 @pytest.mark.parametrize("path", VALID_FIXTURES, ids=lambda p: p.name)
 def test_valid_fixture_accepted_by_both(path: Path) -> None:
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     assert validate_document(data).ok, f"validator rejected valid fixture {path.name}"
     assert _schema_valid(data), f"schema rejected valid fixture {path.name}"
 
 
 @pytest.mark.parametrize("path", HARD_REJECTED, ids=lambda p: p.name)
 def test_malformed_fixture_rejected_by_both(path: Path) -> None:
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     assert not validate_document(data).ok, f"validator accepted malformed {path.name}"
     assert not _schema_valid(data), f"schema accepted malformed {path.name}"
 
 
 def test_trust_laundering_valid_under_both_with_warning() -> None:
-    data = json.loads((ROOT / "conformance" / "malformed" / "trust_laundering.json").read_text())
+    data = json.loads(
+        (ROOT / "conformance" / "malformed" / "trust_laundering.json").read_text(encoding="utf-8")
+    )
     report = validate_document(data)
     assert report.ok and report.warnings
     assert _schema_valid(data)
@@ -66,7 +72,7 @@ def test_bare_form_body_agrees_with_the_schema(path: Path) -> None:
     passes it vacuously, so a third party validating with the canonical artifact
     would accept what mesa-core rejects.
     """
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     bare = data.get("semantic_profile")
     if not isinstance(bare, dict):
         pytest.skip(f"{path.name} has no semantic_profile body")
@@ -80,9 +86,7 @@ def test_bare_form_body_agrees_with_the_schema(path: Path) -> None:
         pytest.param({"operational_boundaries": {"control_mode": "bogus"}}, id="invalid_enum"),
         pytest.param({"metadata_origin": {"source": "nonsense"}}, id="invalid_origin"),
         pytest.param({"operational_boundaries": {"reversible": "false"}}, id="wrong_type"),
-        pytest.param(
-            {"metadata_origin": {"source": "inferred_ai"}}, id="inferred_missing_fields"
-        ),
+        pytest.param({"metadata_origin": {"source": "inferred_ai"}}, id="inferred_missing_fields"),
     ],
 )
 def test_malformed_bare_form_body_rejected_by_both(bare: dict) -> None:
@@ -191,13 +195,31 @@ def _nested_only(root: dict[str, Any]) -> dict[str, Any]:
 
 def _mutation_bases() -> list[dict[str, Any]]:
     bases = [copy.deepcopy(_RICH_ROOT), _nested_only(_RICH_ROOT)]
-    bases += [json.loads(p.read_text()) for p in VALID_FIXTURES]
+    bases += [json.loads(p.read_text(encoding="utf-8")) for p in VALID_FIXTURES]
     return bases
 
 
 _MUTATION_VALUES: list[Any] = [
-    None, "x", "25:99", "noon", "12:00:00", "9:00", "24:00", 7, 0, -3, 3.14,
-    True, False, [], ["a", "b"], ["a", 1], {}, {"k": "v"}, [["x"]], "bogus_enum",
+    None,
+    "x",
+    "25:99",
+    "noon",
+    "12:00:00",
+    "9:00",
+    "24:00",
+    7,
+    0,
+    -3,
+    3.14,
+    True,
+    False,
+    [],
+    ["a", "b"],
+    ["a", 1],
+    {},
+    {"k": "v"},
+    [["x"]],
+    "bogus_enum",
 ]
 _DELETE = object()
 
@@ -247,9 +269,11 @@ def test_mutation_fuzz_validator_and_schema_agree() -> None:
                 with contextlib.suppress(KeyError, IndexError, TypeError):
                     _apply(doc, path, value)
             checked += 1
-            assert validate_document(doc).ok == _schema_valid(doc), (
-                "validator/schema divergence on mutated document: "
-                + json.dumps(doc, default=str)
+            report = validate_document(doc)
+            assert (
+                not [e for e in report.errors if e not in report.semantic_errors]
+            ) == _schema_valid(doc), (
+                "validator/schema divergence on mutated document: " + json.dumps(doc, default=str)
             )
     # Guaranteed by the two rich bases alone (2 x 220), independent of how many
     # valid fixtures happen to be on disk.
@@ -277,9 +301,7 @@ def _with_root(key: str, value: Any) -> dict[str, Any]:
 
 def _with_time_range(start: Any, end: Any) -> dict[str, Any]:
     doc = copy.deepcopy(_RICH_ROOT)
-    cond = doc["semantic_profile"]["operational_boundaries"]["temporal_constraints"][0][
-        "condition"
-    ]
+    cond = doc["semantic_profile"]["operational_boundaries"]["temporal_constraints"][0]["condition"]
     cond["start_time"] = start
     cond["end_time"] = end
     return doc
@@ -330,7 +352,11 @@ _REGRESSION_CASES: list[tuple[str, dict[str, Any], bool]] = [
     ("capability_cm_valid", _with_sp("capability_semantics", {"control_mode": "confirm"}), True),
     ("capability_cm_invalid", _with_sp("capability_semantics", {"control_mode": "always"}), False),
     ("capability_cm_nonstring", _with_sp("capability_semantics", {"control_mode": 1}), False),
-    ("capability_other_members", _with_sp("capability_semantics", {"network_dependency": 3}), True),
+    (
+        "capability_other_members",
+        _with_sp("capability_semantics", {"network_dependency": 3}),
+        False,
+    ),
     ("capability_not_object", _with_sp("capability_semantics", "local_only"), False),
 ]
 

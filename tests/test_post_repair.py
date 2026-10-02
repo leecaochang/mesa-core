@@ -70,7 +70,7 @@ def test_malformed_inherited_profile_does_not_hide_healthy_rows(query):
     )
     response = asyncio.run(MesaToolHandlers(store).mesa_query_profiles(query))
     assert [row["entity_id"] for row in response.get("results", [])] == ["switch.good"], response
-    assert response.get("warnings")
+    assert "warnings" not in response  # Hidden or corrupt policy must not leak existence.
 
 
 def test_bad_sidecar_encoding_uses_documented_validation_error(tmp_path):

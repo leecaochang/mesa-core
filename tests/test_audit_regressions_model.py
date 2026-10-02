@@ -158,9 +158,7 @@ def test_programmatic_profile_serialises_a_non_default_value() -> None:
     profile.operational_boundaries.control_mode = ControlMode.PROHIBITED
     doc = profile.to_dict()
     assert doc["semantic_profile"]["operational_boundaries"]["control_mode"] == "prohibited"
-    assert SemanticProfile.from_dict("light.x", doc).declared(
-        "operational_boundaries.control_mode"
-    )
+    assert SemanticProfile.from_dict("light.x", doc).declared("operational_boundaries.control_mode")
 
 
 def test_declared_default_survives_a_roundtrip() -> None:
@@ -168,9 +166,7 @@ def test_declared_default_survives_a_roundtrip() -> None:
     profile = make_profile("light.x", boundaries={"control_mode": "confirm"})
     doc = profile.to_dict()
     assert doc["semantic_profile"]["operational_boundaries"]["control_mode"] == "confirm"
-    assert SemanticProfile.from_dict("light.x", doc).declared(
-        "operational_boundaries.control_mode"
-    )
+    assert SemanticProfile.from_dict("light.x", doc).declared("operational_boundaries.control_mode")
 
 
 # ------------------------------------------------------ diagnostic profile (Rule D)
@@ -304,9 +300,7 @@ def test_import_of_an_omitted_section_is_fine() -> None:
 
 @pytest.mark.parametrize("section", ["entities", "domains", "areas"])
 def test_import_rejects_an_explicit_null_section(section: str) -> None:
-    result = import_profiles(
-        store(), {"mesa_export": {"format_version": "1.0", section: None}}
-    )
+    result = import_profiles(store(), {"mesa_export": {"format_version": "1.0", section: None}})
     assert section in result.invalid
 
 
@@ -315,7 +309,9 @@ def test_roundtrip_export_import_still_works() -> None:
 
     source = store()
     source.set("light.a", make_profile("light.a", boundaries={"control_mode": "confirm"}))
-    source.set_domain_profile("lock", make_profile("lock", boundaries={"control_mode": "prohibited"}))
+    source.set_domain_profile(
+        "lock", make_profile("lock", boundaries={"control_mode": "prohibited"})
+    )
     target = store()
     result = import_profiles(target, export_profiles(source))
     assert result.ok and result.imported == 2
@@ -343,7 +339,10 @@ def test_malformed_domain_overrides_rejected_at_parse(overrides: Any) -> None:
 
 def test_wellformed_domain_overrides_accepted() -> None:
     defaults = DeploymentDefaults.from_dict(
-        {"default_control_mode": "confirm", "domain_overrides": {"light": {"control_mode": "autonomous"}}}
+        {
+            "default_control_mode": "confirm",
+            "domain_overrides": {"light": {"control_mode": "autonomous"}},
+        }
     )
     assert defaults.control_mode_for("light") == ControlMode.AUTONOMOUS
 
@@ -411,9 +410,7 @@ def test_releasing_the_returned_lease_frees_the_entity_after_a_refresh() -> None
         ["light.kitchen"], 30.0, session_id="s1", now=T0 + timedelta(seconds=1)
     )
     manager.release(second.lease_id, session_id="s1", now=T0 + timedelta(seconds=2))
-    other = manager.request(
-        ["light.kitchen"], 30.0, session_id="s2", now=T0 + timedelta(seconds=3)
-    )
+    other = manager.request(["light.kitchen"], 30.0, session_id="s2", now=T0 + timedelta(seconds=3))
     assert other.granted
 
 
@@ -512,8 +509,18 @@ def test_intent_filter_matches_inherited_routing() -> None:
     """intent_tags inherited from a domain profile are exposed by get_effective,
     so the intent filter must match them too (Spec 9.2)."""
     s = store()
-    s.set_domain_profile("light", SemanticProfile.from_dict("light", {"semantic_profile": {
-        "metadata_origin": {"source": "user"}, "semantic_routing": {"intent_tags": ["evening"]}}}))
+    s.set_domain_profile(
+        "light",
+        SemanticProfile.from_dict(
+            "light",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {"source": "user"},
+                    "semantic_routing": {"intent_tags": ["evening"]},
+                }
+            },
+        ),
+    )
     s.set("light.x", make_profile("light.x", tags=["lighting.ambient"]))
     rows = s.query(intents=["evening"]).rows
     assert [r.entity_id for r in rows] == ["light.x"]
@@ -558,31 +565,81 @@ def test_unconfirmed_hybrid_enrichment_cannot_override_developer() -> None:
     layer that confirmed only semantic_tags cannot overwrite a developer vendor
     field."""
     s = store()
-    s.set_domain_profile("light", SemanticProfile.from_dict("light", {"semantic_profile": {
-        "metadata_origin": {"source": "developer"}, "x_policy": "trusted"}}))
-    s.set("light.x", SemanticProfile.from_dict("light.x", {"semantic_profile": {
-        "metadata_origin": {"source": "hybrid", "confirmed_fields": ["semantic_tags"]},
-        "x_policy": "hijacked"}}))
+    s.set_domain_profile(
+        "light",
+        SemanticProfile.from_dict(
+            "light",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {"source": "developer"},
+                    "x_policy": "trusted",
+                }
+            },
+        ),
+    )
+    s.set(
+        "light.x",
+        SemanticProfile.from_dict(
+            "light.x",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {"source": "hybrid", "confirmed_fields": ["semantic_tags"]},
+                    "x_policy": "hijacked",
+                }
+            },
+        ),
+    )
     assert s.get_effective("light.x").to_dict()["semantic_profile"]["x_policy"] == "trusted"
 
 
 def test_confirmed_hybrid_enrichment_does_override_developer() -> None:
     s = store()
-    s.set_domain_profile("light", SemanticProfile.from_dict("light", {"semantic_profile": {
-        "metadata_origin": {"source": "developer"}, "x_policy": "trusted"}}))
-    s.set("light.x", SemanticProfile.from_dict("light.x", {"semantic_profile": {
-        "metadata_origin": {"source": "hybrid", "confirmed_fields": ["x_policy"]},
-        "x_policy": "confirmed"}}))
+    s.set_domain_profile(
+        "light",
+        SemanticProfile.from_dict(
+            "light",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {"source": "developer"},
+                    "x_policy": "trusted",
+                }
+            },
+        ),
+    )
+    s.set(
+        "light.x",
+        SemanticProfile.from_dict(
+            "light.x",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {"source": "hybrid", "confirmed_fields": ["x_policy"]},
+                    "x_policy": "confirmed",
+                }
+            },
+        ),
+    )
     assert s.get_effective("light.x").to_dict()["semantic_profile"]["x_policy"] == "confirmed"
 
 
 def test_inferred_only_enrichment_is_still_carried() -> None:
     """A lower-tier field with no trusted competitor is not dropped."""
     s = store()
-    s.set("light.z", SemanticProfile.from_dict("light.z", {"semantic_profile": {
-        "metadata_origin": {"source": "inferred_ai", "confidence": 0.9,
-                            "generated_at": "2026-01-01T00:00:00"},
-        "x_hint": "kept"}}))
+    s.set(
+        "light.z",
+        SemanticProfile.from_dict(
+            "light.z",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {
+                        "source": "inferred_ai",
+                        "confidence": 0.9,
+                        "generated_at": "2026-01-01T00:00:00",
+                    },
+                    "x_hint": "kept",
+                }
+            },
+        ),
+    )
     assert s.get_effective("light.z").to_dict()["semantic_profile"]["x_hint"] == "kept"
 
 
@@ -619,16 +676,20 @@ def test_set_deployment_defaults_still_accepts_a_valid_dataclass() -> None:
 # =================================================================
 
 
-@pytest.mark.parametrize("bad", [
-    {"default_control_mode": "bogus"},
-    {"domain_overrides": {"light": "not-an-object"}},
-    {"triggers_automations_domains": [1]},
-])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"default_control_mode": "bogus"},
+        {"domain_overrides": {"light": "not-an-object"}},
+        {"triggers_automations_domains": [1]},
+    ],
+)
 def test_import_quarantines_a_malformed_defaults_object(bad: dict) -> None:
     """DeploymentDefaults.from_dict now raises MesaValidationError; a malformed
     defaults object must be quarantined, not abort the whole import."""
-    result = import_profiles(store(), {"mesa_export": {"format_version": "1.0",
-                                                       "deployment_defaults": bad}})
+    result = import_profiles(
+        store(), {"mesa_export": {"format_version": "1.0", "deployment_defaults": bad}}
+    )
     assert "deployment_defaults" in result.invalid
     assert not result.ok
 
@@ -637,68 +698,182 @@ def test_nested_enrichment_composes_disjoint_subfields() -> None:
     """Rule E per subfield: a developer subfield and an inferred-only subfield of
     the same object both survive (the object is not resolved atomically)."""
     s = store()
-    s.set_domain_profile("light", SemanticProfile.from_dict("light", {"semantic_profile": {
-        "metadata_origin": {"source": "developer"}, "helper_traits": {"note": "dev"}}}))
-    s.set("light.x", SemanticProfile.from_dict("light.x", {"semantic_profile": {
-        "metadata_origin": {"source": "inferred_ai", "confidence": 0.9,
-                            "generated_at": "2026-01-01T00:00:00"},
-        "helper_traits": {"new_hint": "inferred-only"}}}))
+    s.set_domain_profile(
+        "light",
+        SemanticProfile.from_dict(
+            "light",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {"source": "developer"},
+                    "helper_traits": {"note": "dev"},
+                }
+            },
+        ),
+    )
+    s.set(
+        "light.x",
+        SemanticProfile.from_dict(
+            "light.x",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {
+                        "source": "inferred_ai",
+                        "confidence": 0.9,
+                        "generated_at": "2026-01-01T00:00:00",
+                    },
+                    "helper_traits": {"new_hint": "inferred-only"},
+                }
+            },
+        ),
+    )
     ht = s.get_effective("light.x").to_dict()["semantic_profile"]["helper_traits"]
     assert ht == {"note": "dev", "new_hint": "inferred-only"}
 
 
 def test_hybrid_can_confirm_a_nested_enrichment_subfield() -> None:
     s = store()
-    s.set_domain_profile("light", SemanticProfile.from_dict("light", {"semantic_profile": {
-        "metadata_origin": {"source": "developer"}, "helper_traits": {"note": "dev"}}}))
-    s.set("light.x", SemanticProfile.from_dict("light.x", {"semantic_profile": {
-        "metadata_origin": {"source": "hybrid", "confirmed_fields": ["helper_traits.note"]},
-        "helper_traits": {"note": "confirmed"}}}))
+    s.set_domain_profile(
+        "light",
+        SemanticProfile.from_dict(
+            "light",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {"source": "developer"},
+                    "helper_traits": {"note": "dev"},
+                }
+            },
+        ),
+    )
+    s.set(
+        "light.x",
+        SemanticProfile.from_dict(
+            "light.x",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {
+                        "source": "hybrid",
+                        "confirmed_fields": ["helper_traits.note"],
+                    },
+                    "helper_traits": {"note": "confirmed"},
+                }
+            },
+        ),
+    )
     assert s.get_effective("light.x").to_dict()["semantic_profile"]["helper_traits"] == {
-        "note": "confirmed"}
+        "note": "confirmed"
+    }
 
 
 def test_unconfirmed_hybrid_nested_subfield_cannot_override_developer() -> None:
     s = store()
-    s.set_domain_profile("light", SemanticProfile.from_dict("light", {"semantic_profile": {
-        "metadata_origin": {"source": "developer"}, "helper_traits": {"note": "dev"}}}))
-    s.set("light.x", SemanticProfile.from_dict("light.x", {"semantic_profile": {
-        "metadata_origin": {"source": "hybrid", "confirmed_fields": ["semantic_tags"]},
-        "helper_traits": {"note": "hijack"}}}))
+    s.set_domain_profile(
+        "light",
+        SemanticProfile.from_dict(
+            "light",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {"source": "developer"},
+                    "helper_traits": {"note": "dev"},
+                }
+            },
+        ),
+    )
+    s.set(
+        "light.x",
+        SemanticProfile.from_dict(
+            "light.x",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {"source": "hybrid", "confirmed_fields": ["semantic_tags"]},
+                    "helper_traits": {"note": "hijack"},
+                }
+            },
+        ),
+    )
     assert s.get_effective("light.x").to_dict()["semantic_profile"]["helper_traits"] == {
-        "note": "dev"}
+        "note": "dev"
+    }
 
 
 def test_profile_valid_for_is_inherited_when_the_specific_layer_omits_it() -> None:
     """Rule E: a domain invalidation trigger must not vanish when the entity
     profile omits profile_valid_for."""
     s = store()
-    s.set_domain_profile("light", SemanticProfile.from_dict("light", {"semantic_profile": {
-        "metadata_origin": {"source": "developer"},
-        "profile_valid_for": {"conditions": ["dev-trigger"]}}}))
-    s.set("light.x", SemanticProfile.from_dict("light.x", {"semantic_profile": {
-        "metadata_origin": {"source": "user"}}}))
+    s.set_domain_profile(
+        "light",
+        SemanticProfile.from_dict(
+            "light",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {"source": "developer"},
+                    "profile_valid_for": {"conditions": ["dev-trigger"]},
+                }
+            },
+        ),
+    )
+    s.set(
+        "light.x",
+        SemanticProfile.from_dict(
+            "light.x", {"semantic_profile": {"metadata_origin": {"source": "user"}}}
+        ),
+    )
     assert s.get_effective("light.x").metadata.profile_valid_for == {"conditions": ["dev-trigger"]}
 
 
 def test_unconfirmed_hybrid_profile_valid_for_cannot_overwrite_developer() -> None:
     s = store()
-    s.set_domain_profile("light", SemanticProfile.from_dict("light", {"semantic_profile": {
-        "metadata_origin": {"source": "developer"},
-        "profile_valid_for": {"conditions": ["dev"]}}}))
-    s.set("light.x", SemanticProfile.from_dict("light.x", {"semantic_profile": {
-        "metadata_origin": {"source": "hybrid", "confirmed_fields": ["semantic_tags"]},
-        "profile_valid_for": {"conditions": ["hijack"]}}}))
+    s.set_domain_profile(
+        "light",
+        SemanticProfile.from_dict(
+            "light",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {"source": "developer"},
+                    "profile_valid_for": {"conditions": ["dev"]},
+                }
+            },
+        ),
+    )
+    s.set(
+        "light.x",
+        SemanticProfile.from_dict(
+            "light.x",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {"source": "hybrid", "confirmed_fields": ["semantic_tags"]},
+                    "profile_valid_for": {"conditions": ["hijack"]},
+                }
+            },
+        ),
+    )
     assert s.get_effective("light.x").metadata.profile_valid_for == {"conditions": ["dev"]}
 
 
 def test_resolving_profile_valid_for_does_not_mutate_the_layer() -> None:
     s = store()
-    s.set_domain_profile("light", SemanticProfile.from_dict("light", {"semantic_profile": {
-        "metadata_origin": {"source": "developer"},
-        "profile_valid_for": {"conditions": ["dev"]}}}))
-    s.set("light.x", SemanticProfile.from_dict("light.x", {"semantic_profile": {
-        "metadata_origin": {"source": "user"},
-        "profile_valid_for": {"conditions": ["entity"]}}}))
+    s.set_domain_profile(
+        "light",
+        SemanticProfile.from_dict(
+            "light",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {"source": "developer"},
+                    "profile_valid_for": {"conditions": ["dev"]},
+                }
+            },
+        ),
+    )
+    s.set(
+        "light.x",
+        SemanticProfile.from_dict(
+            "light.x",
+            {
+                "semantic_profile": {
+                    "metadata_origin": {"source": "user"},
+                    "profile_valid_for": {"conditions": ["entity"]},
+                }
+            },
+        ),
+    )
     assert s.get_effective("light.x").metadata.profile_valid_for == {"conditions": ["entity"]}
     assert s.get_domain_profile("light").metadata.profile_valid_for == {"conditions": ["dev"]}

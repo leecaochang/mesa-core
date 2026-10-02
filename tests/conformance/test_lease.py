@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -13,7 +13,7 @@ from mesa_core.lease import LeaseManager
 from mesa_core.profile import SemanticProfile
 from mesa_core.store import ProfileStore
 
-NOW = datetime(2026, 7, 2, 12, 0, 0)
+NOW = datetime(2026, 7, 2, 12, 0, 0, tzinfo=UTC)
 
 
 def automation_profile(
@@ -104,16 +104,12 @@ def test_invalid_request_arguments_raise() -> None:
     with pytest.raises(ValueError):
         manager.request(["light.x"], 10, session_id="s1", priority_level="bossy", now=NOW)
     with pytest.raises(ValueError):
-        manager.request(
-            ["light.x"], 10, session_id="s1", preemption_handling="retry", now=NOW
-        )
+        manager.request(["light.x"], 10, session_id="s1", preemption_handling="retry", now=NOW)
 
 
 def test_caller_priority_accepted_but_unused_with_warning() -> None:
     manager = LeaseManager()
-    response = manager.request(
-        ["light.x"], 10, session_id="s1", caller_priority=0.9, now=NOW
-    )
+    response = manager.request(["light.x"], 10, session_id="s1", caller_priority=0.9, now=NOW)
     assert response.granted
     assert any("caller_priority" in w for w in response.warnings)
 
@@ -206,9 +202,7 @@ def test_protected_fails_closed_without_get_state() -> None:
 
 
 def test_protected_active_denies_inactive_grants() -> None:
-    profile = automation_profile(
-        "automation.meds", "protected", trigger=["switch.dispenser"]
-    )
+    profile = automation_profile("automation.meds", "protected", trigger=["switch.dispenser"])
     active = manager_with(profile, get_state=lambda eid: "on")
     assert not active.request(["switch.dispenser"], 10, session_id="s1", now=NOW).granted
 
@@ -328,12 +322,10 @@ def test_malformed_trigger_entities_fails_closed() -> None:
             "environmental_dependencies": {"trigger_entities": "lock.front"},
         }
     }
-    manager = manager_with(SemanticProfile.from_dict("automation.guard", doc))
+    manager = LeaseManager(ProfileStore(MemoryBackend({"automation.guard": doc})))
     response = manager.request(["light.unrelated"], 5, session_id="s1", now=NOW)
     assert not response.granted
-    assert any(
-        "trigger_entities" in w and "automation.guard" in w for w in response.warnings
-    )
+    assert any("trigger_entities" in w and "automation.guard" in w for w in response.warnings)
 
 
 def test_malformed_affected_entities_on_critical_fails_closed() -> None:

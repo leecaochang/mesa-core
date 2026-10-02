@@ -76,3 +76,82 @@ def test_sdk_v2_registered_handlers_publish_and_dispatch() -> None:
         assert json.loads(missing.content[0].text)["error"] == "unknown_tool"
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("mesa_first", [False, True])
+def test_host_tools_coexist_in_either_registration_order(mesa_first):
+    import json
+
+    from mcp import types
+
+    server = mcp_server.Server("composed")
+    is_v2 = hasattr(server, "add_request_handler")
+
+    def install_mesa():
+        register_mesa_tools(ProfileStore(MemoryBackend()), adapter="raw_sdk", server=server)
+
+    if mesa_first:
+        install_mesa()
+    if is_v2:
+
+        async def host_list(context, params):
+            return types.ListToolsResult(
+                tools=[types.Tool(name="host_tool", input_schema={"type": "object"})]
+            )
+
+        async def host_call(context, params):
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text="host-result")]
+            )
+
+        server.add_request_handler("tools/list", types.PaginatedRequestParams, host_list)
+        server.add_request_handler("tools/call", types.CallToolRequestParams, host_call)
+    else:
+
+        @server.list_tools()
+        async def host_list():
+            return [types.Tool(name="host_tool", inputSchema={"type": "object"})]
+
+        @server.call_tool()
+        async def host_call(name, arguments):
+            return [types.TextContent(type="text", text="host-result")]
+
+    if not mesa_first:
+        install_mesa()
+
+    async def scenario():
+        if is_v2:
+            listed = await server.get_request_handler("tools/list").handler(
+                None, types.PaginatedRequestParams()
+            )
+
+            async def call(name):
+                return await server.get_request_handler("tools/call").handler(
+                    None, types.CallToolRequestParams(name=name, arguments={})
+                )
+        else:
+            listed = (
+                await server.request_handlers[types.ListToolsRequest](
+                    types.ListToolsRequest(method="tools/list")
+                )
+            ).root
+
+            async def call(name):
+                return (
+                    await server.request_handlers[types.CallToolRequest](
+                        types.CallToolRequest(
+                            method="tools/call",
+                            params=types.CallToolRequestParams(name=name, arguments={}),
+                        )
+                    )
+                ).root
+
+        assert "host_tool" in {tool.name for tool in listed.tools}
+        assert "mesa_get_caller_context" in {tool.name for tool in listed.tools}
+        assert (await call("host_tool")).content[0].text == "host-result"
+        assert (
+            json.loads((await call("mesa_get_caller_context")).content[0].text)["is_authenticated"]
+            is False
+        )
+
+    asyncio.run(scenario())
