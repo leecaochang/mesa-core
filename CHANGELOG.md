@@ -6,6 +6,8 @@ All notable changes to mesa-core. The MESA specification documents carry their o
 
 ### Added
 
+- Public `shutdown_policy_workers()` and `ashutdown_policy_workers()` drain submitted work and join the shared policy threads. Shutdown is idempotent; later async use creates a fresh pool for host reloads. Work submitted during shutdown raises `MesaError`.
+- Async shutdown keeps the host event loop and default executor available for in-flight callback bridges, waits for cleanup before propagating cancellation, and joins its own temporary shutdown thread. Hosts stop admitting requests before shutdown and keep the loop alive until callbacks return.
 - `EnforcementResult.evaluated_control_mode` exposes the final restriction from the same call evaluation, including inherited temporal restrictions and privacy tightening. The inherited `effective_profile` remains unchanged. Early refusals that cannot evaluate policy return `None`.
 - Hosts can use the public result to preserve a stronger read-only write boundary without duplicating temporal or inheritance logic. Regressions cover advisory and enforced decisions, active and inactive inherited constraints, unevaluable conditions, privacy adjustment, confirmation and early refusal.
 

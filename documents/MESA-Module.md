@@ -1281,6 +1281,16 @@ Malformed automation policies, including invalid inherited layers, conservativel
 
 The asynchronous MCP query, get, and explain handlers offload storage and resolution to worker threads. Synchronous registry, validity-context, and semantic-moment callbacks on these paths also run in dedicated MESA workers, isolated from the event loop default executor and may bridge to the server loop using `asyncio.run_coroutine_threadsafe`. Caller-context lookup and privacy decisions stay on the request thread; context variables propagate to workers. Caller context is captured and copied once before any policy await. Caller-context and semantic-moment callbacks may be async; synchronous caller callbacks must return promptly without blocking their own event loop.
 
+**Worker lifecycle.** Hosts importing asynchronous APIs must release the package's shared policy workers when unloading, shutting down, or cleaning up a test. First stop admitting MESA requests, then await the public cleanup API while the host loop and its default executor are still available:
+
+```python
+from mesa_core import ashutdown_policy_workers
+
+await ashutdown_policy_workers()
+```
+
+`shutdown_policy_workers()` is the synchronous equivalent for host code outside an event loop. Both functions drain accepted jobs and join the policy threads; they are idempotent and apply to all stores, enforcers, handlers and lease managers sharing this imported package instance. Calls submitted while the pool drains raise `MesaError`; later async use creates a fresh pool, supporting host reloads. Async cleanup uses a temporary shutdown thread that it also joins, keeping the host default executor free for callbacks. Cancellation waits for cleanup before propagating. Policy callbacks cannot shut down their own pool. Callbacks must return for cleanup to finish; Python threads cannot be forcibly terminated. Shut down workers before closing their backend connections and never access a private executor from the host.
+
 Calendar callbacks must return a list of events: `[]` means a valid empty calendar, while a wrong-typed result or exception is unevaluable and keeps constraints active regardless of negation. Numeric enforcement preserves integer precision through decimal comparisons, with the existing finite-float range check defining when an operand is unevaluable. Automation reference traversal rejects cyclic configurations with `MesaValidationError` and accepts shared acyclic aliases.
 
 ### FastMCP compatibility (verified 23 September 2026)
