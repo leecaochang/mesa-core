@@ -2,6 +2,21 @@
 
 All notable changes to mesa-core. The MESA specification documents carry their own version history.
 
+## 1.3.3 - 2026-10-02
+
+### Added
+
+- `EnforcementResult.evaluated_control_mode` exposes the final restriction from the same call evaluation, including inherited temporal restrictions and privacy tightening. The inherited `effective_profile` remains unchanged. Early refusals that cannot evaluate policy return `None`.
+- Hosts can use the public result to preserve a stronger read-only write boundary without duplicating temporal or inheritance logic. Regressions cover advisory and enforced decisions, active and inactive inherited constraints, unevaluable conditions, privacy adjustment, confirmation and early refusal.
+
+### Fixed
+
+- Active temporal `read_only` restrictions win ties with `prohibited`, preserving entity nature regardless of constraint order or an equally restrictive inherited mode.
+
+### Clarified
+
+- Since 1.3.2, both `read_only` and `prohibited` warn and allow when server and effective profile modes are advisory; either enforced mode still blocks. This server behavior does not remove the specification's obligation on agents to avoid writes to read-only entities. Hosts may impose stronger restrictions.
+
 ## 1.3.2 - 2026-10-02
 
 A safety and compatibility repair release. The package version advances to 1.3.2; the profile format `schema_version` remains `1.1`.

@@ -122,7 +122,7 @@ if profile is not None:
 
 ## Status
 
-mesa-core v1.3.2 is ready for use: profile storage and five-level inheritance (including the device scope of MESA 1.1), enforcement with confirmation, temporal constraints including solar conditions, the MCP retrieval tools, privacy controls, the advisory lease protocol, and portable profile export/import are all implemented. Multi-agent lease preemption is planned for v2.
+mesa-core v1.3.3 is ready for use: profile storage and five-level inheritance (including the device scope of MESA 1.1), enforcement with confirmation, temporal constraints including solar conditions, the MCP retrieval tools, privacy controls, the advisory lease protocol, and portable profile export/import are all implemented. Multi-agent lease preemption is planned for v2.
 
 ```bash
 git clone https://github.com/leecaochang/mesa-core

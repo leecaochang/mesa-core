@@ -307,7 +307,10 @@ class EnforcementResult:
     deny_response_mode: Optional[str] = None
     active_constraint_ids: List[str] = field(default_factory=list)
     active_constraint_reasons: Dict[str, str] = field(default_factory=dict)
+    evaluated_control_mode: Optional[ControlMode] = None
 ```
+
+`effective_profile` contains the inherited profile before temporal and privacy adjustments. `evaluated_control_mode` reports the final control mode used for this call, including active temporal restrictions and privacy tightening. It is present on allowed calls and refusals after policy evaluation; it is `None` when policy is unavailable, contradictory target parameters are refused before evaluation, or no valid mode can be determined. A host promising a stronger boundary, such as blocking read-only writes even in advisory mode, can check this field from the same evaluation. Do not infer the evaluated restriction from the inherited profile or warning text. Re-evaluate immediately before execution, including after approval, because time and host state may have changed.
 
 `MesaEnforcer(store, *, resolver=None, mode="enforced", interactive=True, challenge_ttl_seconds=120, ...)` accepts state, calendar and solar callbacks; see [enforcer.py](../mesa_core/enforcer.py) for full signatures. TTL must be an integer in 1..120 seconds. At most 4,096 outstanding or recently used challenges are retained until expiry. The host creates approval tokens after authentic human approval. Limits are checked before a challenge is issued or consumed.
 
@@ -331,7 +334,7 @@ store.set_deployment_defaults(
 
 This default applies to unprofiled entities and supplies the fallback when profiles omit control mode. A profiled entity without a trusted control declaration uses the stricter of that fallback and `confirm`; unrelated metadata cannot downgrade a `prohibited` fallback. Trusted control declarations replace the fallback and then participate in Rule A, so an explicit trusted `autonomous` stays autonomous unless another declaration restricts it. Two practical notes for fail-closed operators:
 
-- `prohibited` hard-blocks only when the call is evaluated in enforced mode; in advisory mode it passes with a warning. Pair a `prohibited` default with enforced evaluation. (`read_only` blocks regardless of enforcement mode, but it asserts entity nature rather than policy, so `prohibited` is the better fit for "not yet granted.")
+- `prohibited` hard-blocks only when the call is evaluated in enforced mode; in advisory mode it passes with a warning. Pair a `prohibited` default with enforced evaluation. `read_only` shares that enforcement behavior but asserts entity nature rather than policy, so `prohibited` is the better fit for "not yet granted."
 - `control_mode` gates control (writes/service calls) only; it never gates reads. mesa-core has no blanket read-deny default, and privacy denial is role-based (`access_roles.deny_for`), not a configurable default. Read/visibility fail-closed remains the host's responsibility.
 
 **Evaluation order:**

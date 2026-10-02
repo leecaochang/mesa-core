@@ -188,7 +188,10 @@ class TemporalEvaluator:
                     effect_mode = None
                 if effect_mode is not None:
                     current_mode = result.boundaries.control_mode
-                    if CONTROL_MODE_RANK[effect_mode] > CONTROL_MODE_RANK[current_mode]:
+                    if CONTROL_MODE_RANK[effect_mode] > CONTROL_MODE_RANK[current_mode] or (
+                        effect_mode == ControlMode.READ_ONLY
+                        and current_mode == ControlMode.PROHIBITED
+                    ):
                         result.boundaries.control_mode = effect_mode
                     elif (
                         CONTROL_MODE_RANK[effect_mode] < CONTROL_MODE_RANK[boundaries.control_mode]

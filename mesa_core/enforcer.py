@@ -58,6 +58,15 @@ UNAVAILABLE_STATES = frozenset({"unavailable", "unknown", "none", ""})
 
 @dataclass
 class EnforcementResult:
+    """One call's decision and evaluated restriction.
+
+    ``effective_profile`` is the inherited profile, before temporal and privacy
+    adjustments. ``evaluated_control_mode`` includes those adjustments from
+    this evaluation; it is None if policy could not be evaluated or the call
+    was refused before that stage. Hosts may apply a stronger write boundary
+    using this field without evaluating the policy a second time.
+    """
+
     allowed: bool
     reason: str
     rule_applied: str | None
@@ -68,6 +77,7 @@ class EnforcementResult:
     deny_response_mode: str | None = None
     active_constraint_ids: list[str] = field(default_factory=list)
     active_constraint_reasons: dict[str, str] = field(default_factory=dict)
+    evaluated_control_mode: ControlMode | None = None
 
 
 def _target_conflict(entity_id: str, service_params: dict[str, Any]) -> str | None:
@@ -509,6 +519,11 @@ class MesaEnforcer:
                 warnings=warnings,
                 active_constraint_ids=list(temporal.active_constraint_ids),
                 active_constraint_reasons=dict(temporal.active_constraint_reasons),
+                evaluated_control_mode=(
+                    boundaries.control_mode
+                    if isinstance(boundaries.control_mode, ControlMode)
+                    else None
+                ),
             )
 
         # 1. Temporal constraints first, so a temporally tightened control_mode
@@ -651,6 +666,7 @@ class MesaEnforcer:
             warnings=warnings,
             active_constraint_ids=list(temporal.active_constraint_ids),
             active_constraint_reasons=dict(temporal.active_constraint_reasons),
+            evaluated_control_mode=boundaries.control_mode,
         )
 
     async def aevaluate(
