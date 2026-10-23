@@ -1,5 +1,5 @@
 # MESA: Metadata and Environment Semantics for Agents
-**A semantic safety and coordination layer for AI-operated smart environments** **Version:** 1.1 **Describes:** MESA 1.1
+**A semantic safety and coordination layer for AI-operated smart environments** **Version:** 1.1 **Describes:** MESA 1.2
 
 ---
 
@@ -185,4 +185,4 @@ AI-inferred profiles are explicitly marked as lower-trust. An agent that generat
 
 ---
 
-*MESA - Metadata and Environment Semantics for Agents. Overview, version 1.1. Describes MESA 1.1.*
+*MESA - Metadata and Environment Semantics for Agents. Overview, version 1.1. Describes MESA 1.2.*

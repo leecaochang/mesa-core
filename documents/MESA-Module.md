@@ -1,5 +1,5 @@
 # mesa-core: MESA Reference Module Proposal
-**Version:** 1.1 **Describes:** MESA 1.1, mesa-core 1.3.x **Document Type:** Technical Implementation Specification **Companion Documents:**
+**Version:** 1.2 **Describes:** MESA 1.2, mesa-core 1.4.x **Document Type:** Technical Implementation Specification **Companion Documents:**
 - MESA Overview
 - MESA Specification (Core)
 - MESA Enrichment
@@ -212,7 +212,7 @@ defaults = store.get_deployment_defaults()
 store.set_deployment_defaults({"default_control_mode": "confirm"})
 ```
 
-**ProfileStore public API.** The signatures in [store.py](../mesa_core/store.py) are authoritative. Registry callbacks are keyword-only: `get_entity_domain`, `get_entity_area`, `get_entity_device`, and `get_entity_integration`. Entity CRUD uses canonical lowercase HA identifiers; scope CRUD uses the separate `get/set/delete_*_profile` methods. Never pass reserved storage keys to entity APIs. `store.resolver` is shared by enforcement, retrieval, triggers and leases; `attach_resolver` rejects a resolver belonging to another store. Configure mappings before serving requests. Registry callbacks must return a nonempty string or `None`; malformed or raising callbacks cannot silently remove policy layers.
+**ProfileStore public API.** The signatures in [store.py](../mesa_core/store.py) are authoritative. Registry callbacks are keyword-only: `get_entity_domain`, `get_entity_area`, `get_entity_device`, `get_device_parent`, and `get_entity_integration`. Entity CRUD uses canonical lowercase HA identifiers; scope CRUD uses the separate `get/set/delete_*_profile` methods. Never pass reserved storage keys to entity APIs. `store.resolver` is shared by enforcement, retrieval, triggers and leases; `attach_resolver` rejects a resolver belonging to another store. Configure mappings before serving requests. Registry callbacks must return a nonempty string or `None`; malformed or raising callbacks cannot silently remove policy layers.
 
 **Sync and async APIs.** All public methods on `ProfileStore`, `MesaEnforcer`, and `TriggerValidator` are available in both synchronous and asynchronous variants, prefixed with `a` (e.g. `get()` / `aget()`, `evaluate()` / `aevaluate()`). `LeaseManager`'s lifecycle methods have async variants (`arequest()`, `arelease()`, `arelease_session()`, `aexpire()`); its `active_leases()` is a synchronous in-memory read and `sensor_state()` can sweep expiry and invoke host event handlers. Async resolution goes through the store: `aget_effective()` and `aexplain()` wrap the `InheritanceResolver`. `PrivacyEnforcer.evaluate()` is synchronous-only by design: it is pure computation with no I/O, so it cannot block the event loop. MCP servers are typically async; host servers SHOULD use the async variants for anything that touches storage.
 
@@ -369,15 +369,16 @@ explanation = resolver.explain("light.bedroom_ceiling")
 
 1. Load entity-level profile if it exists.
 2. Load device-level profile for the physical device that owns this entity (requires the host's `get_entity_device` callback; without it, device-scope profiles stay inert).
-3. Load area-level profile for the entity's assigned area (requires the host's `get_entity_area` callback).
-4. Load integration-level profile for the integration that created this entity (requires the host's `get_entity_integration` callback; without it, only integrations whose name equals the entity's HA domain resolve, and hub/device integration profiles stay inert).
-5. Load domain-level profile for the entity's HA domain.
-6. Load deployment defaults.
-7. Merge from lowest to highest precedence: defaults, then domain, integration, area, device, entity.
-8. Apply conflict resolution rules (Section 5.7) for fields present at multiple levels.
-9. Apply `triggers_automations` stickiness: if any level is `likely`, effective is `likely` unless entity-level overrides with `override_triggers_automations: true`.
-10. Apply `control_mode` tightening: most restrictive value wins.
-11. Apply privacy most-restrictive-wins.
+3. Load the parent-device-level profile: when the entity's device is an HA child device, the device profile of its main device (requires the host's `get_device_parent` callback; without it, a main device's profile covers only entities attached directly to it). Called once, on the entity's own device, never on the parent.
+4. Load area-level profile for the entity's assigned area (requires the host's `get_entity_area` callback).
+5. Load integration-level profile for the integration that created this entity (requires the host's `get_entity_integration` callback; without it, only integrations whose name equals the entity's HA domain resolve, and hub/device integration profiles stay inert).
+6. Load domain-level profile for the entity's HA domain.
+7. Load deployment defaults.
+8. Merge from lowest to highest precedence: defaults, then domain, integration, area, parent device, device, entity.
+9. Apply conflict resolution rules (Section 5.7) for fields present at multiple levels.
+10. Apply `triggers_automations` stickiness: if any level is `likely`, effective is `likely` unless entity-level overrides with `override_triggers_automations: true`.
+11. Apply `control_mode` tightening: most restrictive value wins.
+12. Apply privacy most-restrictive-wins.
 12. Return merged SemanticProfile.
 
 **Host callback for area/domain lookup:**
@@ -409,7 +410,7 @@ merged = resolver.merge(higher_authority_profile, lower_authority_profile)
 - **Rule A:** `control_mode` tightening-only. `prohibited` > `confirm` > `autonomous` regardless of authority. Sole exception: an entity-level `user`-origin profile may loosen an inherited `confirm` to `autonomous` via `override_control_mode: true` with `control_reason`. `prohibited` and `read_only` never loosen.
 - **Rule B:** Select the trusted tier first; `likely` is sticky across scopes within that tier. Only a trusted entity declaration with a trusted override flag and `human_reason` can override broader `likely`. Inferred helpers are always coerced to `likely`.
 - **Rule C:** Privacy level most-restrictive-wins. `restricted` > `sensitive` > `normal` > `public`.
-- **Rule D:** Scope-then-origin for all other fields. Most specific scope wins (`entity` > `device` > `area` > `integration` > `domain`) among trusted origins (`developer`, `user`, `hybrid`); origin breaks scope ties. Hybrid trust is per field: a `hybrid` profile is trusted-tier only for the field paths in its `confirmed_fields`; its unconfirmed fields resolve in the lower tier as inferred (Rule 6). `inferred_ai` and `unknown`, and unconfirmed hybrid fields, never override trusted-tier declarations at any scope; among themselves the same scope-then-origin rule applies, with `inferred_ai` > `unknown`.
+- **Rule D:** Scope-then-origin for all other fields. Most specific scope wins (`entity` > `device` > `parent_device` > `area` > `integration` > `domain`) among trusted origins (`developer`, `user`, `hybrid`); origin breaks scope ties. Hybrid trust is per field: a `hybrid` profile is trusted-tier only for the field paths in its `confirmed_fields`; its unconfirmed fields resolve in the lower tier as inferred (Rule 6). `inferred_ai` and `unknown`, and unconfirmed hybrid fields, never override trusted-tier declarations at any scope; among themselves the same scope-then-origin rule applies, with `inferred_ai` > `unknown`.
 - **Rule E:** Absence is not a conflict. Missing fields are inherited, not defaulted.
 
 ### 4.7 TemporalEvaluator
@@ -786,13 +787,16 @@ def get_entity_area(entity_id: str) -> Optional[str]:
     # its own inherits the area of the device that owns it, so check the
     # entity registry entry first and fall back to the device registry entry.
     # Returning only the entity's own area_id silently skips area inheritance
-    # for the many entities that are placed by their device.
+    # for the many entities that are placed by their device. A child device
+    # with no area of its own takes its main device's area in turn.
     entry = entity_registry.get(entity_id)
     if entry is None:
         return None
     if entry.area_id is not None:
         return entry.area_id
     device = device_registry.get(entry.device_id) if entry.device_id else None
+    if device is not None and device.area_id is None and device.parent_device_id:
+        device = device_registry.get(device.parent_device_id)
     return device.area_id if device else None
 
 
@@ -803,6 +807,14 @@ def get_entity_domain(entity_id: str) -> str:
 def get_entity_device(entity_id: str) -> Optional[str]:
     entry = entity_registry.get(entity_id)
     return entry.device_id if entry else None
+
+
+def get_device_parent(device_id: str) -> Optional[str]:
+    # The main device of an HA child device, keyed by device registry ID.
+    # Never return via_device_id: it records a hub or bridge connection, not
+    # composition, and a hub's policy must not reach its connected devices.
+    device = device_registry.get(device_id)
+    return device.parent_device_id if device else None
 
 
 def get_entity_integration(entity_id: str) -> Optional[str]:
@@ -821,7 +833,10 @@ resolver = InheritanceResolver(
     # domain resolve, leaving hub and device integration sidecars unused
     # (Specification 5.6). Both are also required by query(devices=...) and
     # query(integrations=...), which raise ValueError when they are absent.
+    # get_device_parent extends the device level to HA child devices: without
+    # it, a main device's profile stops at the entities attached directly to it.
     get_entity_device=get_entity_device,
+    get_device_parent=get_device_parent,
     get_entity_integration=get_entity_integration,
 )
 
@@ -1010,7 +1025,7 @@ def build_call_ha_service(
 1. **Separate target from data.** Take `entity_id`, `device_id`, `area_id`,
 `floor_id`, `label_id`, `config_entry_id`, and any nested `target` block out of the service data. What remains is service data, and it is what carries the parameters declared limits are written against.
 2. **Expand every selector to entities** through the HA registries, the same
-knowledge `expand_target` supplies to `TriggerValidator`. Remember that an entity inherits its device's area, so an area selector reaches entities whose own `area_id` is unset.
+knowledge `expand_target` supplies to `TriggerValidator`. Remember that an entity inherits its device's area, so an area selector reaches entities whose own `area_id` is unset, and that a `device_id` naming a main device reaches the entities of its child devices too.
 3. **Require the expansion to be complete, and deny otherwise.** Home
 Assistant's target extraction reports what it could not resolve alongside what it could. Treat a failed expansion, an unknown device, area, floor, label, or config entry, or an empty resolved set as a denial. An empty set is the trap: "every decision allowed" is vacuously true of no decisions, so an unresolvable target would otherwise read as approval.
 4. **Evaluate each resolved entity** with the shared service data. Policy
@@ -1066,11 +1081,12 @@ mesa-core never talks to Home Assistant. Every piece of HA registry or state kno
 | `get_entity_area` | `ProfileStore` / `InheritanceResolver` | Area-level inheritance is skipped; `query(areas=...)` raises `ValueError`. |
 | `get_entity_integration` | `InheritanceResolver` | Integration sidecar profiles resolve only where the integration name equals the entity's HA domain; hub and device integration profiles stay inert (Specification 5.6). `query(integrations=...)` raises `ValueError`. |
 | `get_entity_device` | `ProfileStore` / `InheritanceResolver` | Device-level inheritance is skipped entirely; device-scope profiles are inert (Specification 5.6); `query(devices=...)` raises `ValueError`. |
+| `get_device_parent` | `ProfileStore` / `InheritanceResolver` | Maps a device registry ID to the main device it is a child of (`parent_device_id`), never a `via_device` hub link. Without it the parent-device level is skipped: a main device's profile covers only entities attached directly to that device, and `query(devices=...)` compares only each entity's own device. Called only on an entity's own device, so nesting is one level. Same contract as the other registry callbacks: synchronous, a non-empty string or `None`, and any failure raises `HostCallbackError`. |
 | `get_state` | `MesaEnforcer`, `LeaseManager` (accepted by `TemporalEvaluator` for future entity-state condition types; unused there in 1.x) | Declared-limit predicates are treated as active (fail-closed), so limits may block unexpectedly; protected automations deny leases unconditionally. |
 | `get_calendar_events` | `TemporalEvaluator` | `calendar_entity` conditions are unevaluable and treated as active (fail-closed). Note `duration` and `relative_to_event` conditions validate but are unevaluable in 1.x regardless, and also fail closed. |
 | `get_solar_elevation` | `TemporalEvaluator` (via `MesaEnforcer`) | `solar_angle` conditions are unevaluable and treated as active (fail-closed). |
 | `get_automation_configs` | `TriggerValidator` (per call) | No automation cross-reference is possible. |
-| `expand_target` | `TriggerValidator`, `entities_by_role` | Indirect references (device triggers, purpose-specific trigger target selectors) are invisible; a stale `none` declaration behind them passes unflagged. |
+| `expand_target` | `TriggerValidator`, `entities_by_role` | Indirect references (device triggers, purpose-specific trigger target selectors) are invisible; a stale `none` declaration behind them passes unflagged. A `device_id` naming a main device expands to its child devices' entities as well as its own. |
 | `caller_context_fn` | `register_mesa_tools` | Tools respond as an anonymous, role-less caller; lease session scoping degrades. |
 | `get_semantic_moments` | `register_mesa_tools` / `MesaToolHandlers` | `mesa_get_profile` never includes the `semantic_moments` block; agents fall back to profile-declared automation semantics. |
 | `get_validity_context` | `register_mesa_tools` / `MesaToolHandlers` | The `profile_valid_for` registry and version triggers cannot be evaluated, so an invalidated profile keeps reporting `staleness_status: current` and no invalidation warning is surfaced (Specification 5.4, 5.5). `review_after_days` is evaluated either way. Called once per entity, with that entity's ID. Must be synchronous, like the resolver callbacks: an `async def` returns a coroutine rather than a context, which mesa-core refuses with a logged warning rather than reading as an empty context. Values are type-checked, and a wrong-typed one is dropped with a warning; `known_entity_ids` must be a reusable collection of entity IDs (a set, list, tuple, or any other `Collection[str]`): a generator or a bare string is refused, because the callback runs once per entity and a one-shot value reused across those calls would be drained by the first row of a query. |
@@ -1182,6 +1198,10 @@ The callback returns `list[dict]`, one entry per moment, each carrying at least 
 **Fail-closed lease profile parsing.** Malformed Enrichment Section 11 fields on automation profiles (`cooperative_priority.level`, `trigger_entities`, `condition_entities`, `affected_entities`) now deny leases with a surfaced warning instead of silently losing protection. Lease timestamps are timezone-aware UTC.
 
 **MCP corrections.** `mesa_version` reports `1.1`; `component_type` is derived from the entity ID's domain (previously always `entity`); the raw SDK adapter returns an `unknown_tool` error envelope instead of raising for unregistered tool names.
+
+### Added in Version 1.4
+
+**Parent-device inheritance level (MESA 1.2).** A sixth level for Home Assistant child devices, ranked between device and area: the optional `get_device_parent` host callback on `ProfileStore` and `InheritanceResolver`, `InheritanceResolver.parent_device()`, `parent_device` in explanation `provided_by_level`, and a `query(devices=...)` filter that also matches entities whose device's parent is listed. Parent profiles are ordinary device profiles, so storage, portability, and the profile `schema_version` (`1.1`) are unchanged. `mesa_version` now reports `1.2`.
 
 ### Deferred to Version 2
 

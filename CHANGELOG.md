@@ -2,6 +2,27 @@
 
 All notable changes to mesa-core. The MESA specification documents carry their own version history.
 
+## 1.4.0 - 2026-10-23
+
+Implements MESA 1.2. The profile format `schema_version` remains `1.1`; stored profiles and export archives are unchanged.
+
+### Added
+
+- **Parent-device level for Home Assistant child devices.** Since HA 2026.9, a multi-part product is a main device plus one child device per part, so a profile on the main device stopped reaching its parts' entities without warning. The optional `get_device_parent` callback on `ProfileStore` and `InheritanceResolver` maps a device to its main device, whose profile now applies as the `parent_device` level, between `device` and `area` (Spec 5.6). Rules A to C still apply, so a prohibited parent binds a child that declares `confirm`; under Rule D the child's own fields win. Loosening overrides stay entity-only.
+- The callback follows the registry-callback contract and raises `HostCallbackError` on failure. It is called only on the entity's own device, so nesting is one level; a callback naming the device itself means no parent.
+- `provided_by_level` gains `parent_device`, and the `devices` query filter also matches an entity whose device's parent is listed.
+
+### Changed
+
+- `SCOPE_RANK` is renumbered (entity 6 down to domain 1). Relative order is unchanged.
+- MCP responses report `mesa_version: "1.2"`, the MESA version, which no longer matches the profile `schema_version`.
+
+### Compatibility
+
+- Without `get_device_parent`, behavior is unchanged from 1.3.3.
+- With it, every main-device profile reaches its parts, including trusted `autonomous` declarations that replace the baseline (a lock part then resolves `autonomous`, not `prohibited`). Review main-device profiles before enabling it.
+- Report `parent_device_id` only, never a `via_device` hub link.
+
 ## 1.3.3 - 2026-10-02
 
 ### Added

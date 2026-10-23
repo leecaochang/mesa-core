@@ -1,5 +1,5 @@
 # MESA Getting Started Guide
-**Version:** 1.1 **Describes:** MESA 1.1 **Document Type:** Practical Implementation Guide
+**Version:** 1.2 **Describes:** MESA 1.2 **Document Type:** Practical Implementation Guide
 
 ---
 
@@ -430,6 +430,8 @@ privacy_classification:
 ```
 
 Two things to know. First, your host server needs the entity-to-device mapping from the HA registries for device profiles to resolve; every maintained host provides it, but on one that does not, device profiles are simply inert (they never fail open). Second, device profiles can tighten but never loosen: `override_control_mode` works only on entity-level profiles.
+
+**Products made of parts (MESA 1.2).** Since Home Assistant 2026.9, an integration can register one product as a main device plus a child device for each part: the outlets of a power strip, the gangs of a wall switch. Profile the main device and its profile reaches every part's entities through the parent-device level, ranked just below the part's own device profile. A strip-wide `prohibited` therefore still binds outlet 3 after an integration update moves it onto its own child device, and a profile on the outlet's device can override the strip's descriptive fields but never loosen its control mode. Your host needs the device-to-parent mapping for this; without it, a main device's profile covers only the entities attached directly to it. Hub and bridge links (`via_device` in the HA registry) are not parents, so a Zigbee coordinator's profile never reaches the devices paired with it.
 
 ---
 
@@ -1202,7 +1204,7 @@ for issue in issues:
 
 It exits nonzero on findings, so it slots into CI directly. A GitHub Action wrapper and further rules (kernel-field completeness, `autonomous` on security domains, `reversible: true` on notification entities) are roadmap items, not shipped checks.
 
-**Profile inheritance debugger.** The `mesa_explain_profile` tool (defined in the Specification Section 9.5) returns the full inheritance resolution path for any entity, showing which profile level contributed each effective field (including the `device` level as of MESA 1.1) and whether any conflict resolution rule was applied. When an agent refuses an action and you cannot tell why, this is the first tool to reach for. MCP servers running mesa-core implementing Level 3 MUST expose this tool.
+**Profile inheritance debugger.** The `mesa_explain_profile` tool (defined in the Specification Section 9.5) returns the full inheritance resolution path for any entity, showing which profile level contributed each effective field (including the `device` level as of MESA 1.1 and `parent_device` as of MESA 1.2) and whether any conflict resolution rule was applied. When an agent refuses an action and you cannot tell why, this is the first tool to reach for. MCP servers running mesa-core implementing Level 3 MUST expose this tool.
 
 **Reference profiles for common domains.** Ten well-authored example profiles covering `light`, `climate`, `lock`, `camera`, `media_player`, `cover`, `switch`, `sensor`, `binary_sensor`, and `alarm_control_panel`. Developers can copy and adapt these rather than starting from scratch.
 
@@ -1248,4 +1250,4 @@ When an agent is blocked from acting, it needs to communicate a reason to the us
 
 `none` is a positive assertion. Once declared, it tells every agent in every session that this entity is safe to act on without cascade caution. If you later add an automation that uses this entity as a trigger or condition, the declaration is now wrong. Use mesa-core's `TriggerValidator` to catch this automatically. Run it at startup and when automations change. If you cannot run validation, use `unknown` instead of `none` unless you are certain.
 
-*MESA - Metadata and Environment Semantics for Agents. Version 1.1. Getting Started Guide. Discussion and contributions are welcome via GitHub Issues.*
+*MESA - Metadata and Environment Semantics for Agents. Version 1.2. Getting Started Guide. Discussion and contributions are welcome via GitHub Issues.*

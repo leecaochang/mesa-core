@@ -55,7 +55,7 @@ def test_query_filters_domains_and_excludes_untrusted_by_default() -> None:
     store.set("light.inferred", make_profile("light.inferred", origin="inferred_ai"))
 
     result = call(registry, "mesa_query_profiles", domains=["light"])
-    assert result["mesa_version"] == "1.1"
+    assert result["mesa_version"] == "1.2"
     assert result["total_matched"] == 1
     assert result["results"][0]["entity_id"] == "light.a"
 
@@ -272,7 +272,7 @@ def _lease_registry() -> DictToolRegistry:
 def test_lease_request_and_release_round_trip() -> None:
     registry = _lease_registry()
     granted = call(registry, "mesa_request_lease", entities=["light.x"], duration_seconds=10)
-    assert granted["mesa_version"] == "1.1"
+    assert granted["mesa_version"] == "1.2"
     assert granted["granted"] and granted["entities_granted"] == ["light.x"]
 
     released = call(registry, "mesa_release_lease", lease_id=granted["lease_id"])
@@ -449,6 +449,32 @@ def test_query_devices_and_integrations_filters_end_to_end() -> None:
     assert result["results"][0]["entity_id"] == "light.a"
     result = call(registry, "mesa_query_profiles", integrations=["hue"])
     assert result["total_matched"] == 2
+
+
+def test_parent_device_level_end_to_end() -> None:
+    # HA child devices (MESA 1.2): the main device's profile reaches the
+    # child's entity, explain names the level, and the devices filter on the
+    # main device finds the part.
+    store = ProfileStore(
+        backend=MemoryBackend(),
+        get_entity_device={"switch.outlet": "outlet", "sensor.power": "strip"}.get,
+        get_device_parent={"outlet": "strip"}.get,
+    )
+    registry, _ = make_registry(store)
+    store.set_device_profile(
+        "strip", make_profile("strip", boundaries={"control_mode": "prohibited"})
+    )
+    store.set("switch.outlet", make_profile("switch.outlet"))
+    store.set("sensor.power", make_profile("sensor.power"))
+
+    result = call(registry, "mesa_explain_profile", entity_id="switch.outlet")
+    entry = next(
+        e for e in result["explanation"] if e["field_path"] == "operational_boundaries.control_mode"
+    )
+    assert entry["provided_by_level"] == "parent_device"
+    assert entry["effective_value"] == "prohibited"
+    result = call(registry, "mesa_query_profiles", devices=["strip"])
+    assert {row["entity_id"] for row in result["results"]} == {"switch.outlet", "sensor.power"}
 
 
 def test_query_filters_without_callbacks_return_invalid_query() -> None:
