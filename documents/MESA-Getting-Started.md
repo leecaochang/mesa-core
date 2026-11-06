@@ -1,5 +1,5 @@
 # MESA Getting Started Guide
-**Version:** 1.2 **Describes:** MESA 1.2 **Document Type:** Practical Implementation Guide
+**Version:** 1.3 **Describes:** MESA 1.3 **Document Type:** Practical Implementation Guide
 
 ---
 
@@ -187,8 +187,9 @@ enforcer = MesaEnforcer(store)
 # Before passing any service call to HA. Three details matter:
 #  - `service` is the canonical "domain.service", e.g. "media_player.volume_set".
 #  - `service_params` must be the REAL parameters of the call. A declared limit
-#    whose parameter is missing from service_params is skipped, so passing
-#    nothing here silently drops volume, brightness, and temperature caps.
+#    whose parameter is missing from service_params is skipped unless it
+#    declares when_absent: refuse, so passing nothing here silently drops
+#    volume, brightness, and temperature caps.
 #  - the validated entity_id goes LAST in the merge. Expanded the other way, a
 #    caller-supplied entity_id would replace the target policy was chosen for,
 #    so the approved confirmation challenge would name a different entity than
@@ -267,7 +268,7 @@ Create it with `semantic_profile` and `privacy_classification` as top-level keys
 ```json
 {
   "semantic_profile": {
-    "schema_version": "1.1",
+    "schema_version": "1.2",
     "metadata_origin": {"source": "developer", "confidence": 1.0},
     "semantic_tags": ["diagnostic.causality"],
     "operational_boundaries": {
@@ -357,7 +358,7 @@ This supplements the built-in baseline with your deployment-specific decisions. 
 
 ```yaml
 semantic_profile:
-  schema_version: "1.1"
+  schema_version: "1.2"
   metadata_origin:
     source: user
     confidence: 1.0
@@ -383,7 +384,7 @@ For `input_boolean.cinema_mode`:
 
 ```yaml
 semantic_profile:
-  schema_version: "1.1"
+  schema_version: "1.2"
   metadata_origin:
     source: user
     confidence: 1.0
@@ -416,7 +417,7 @@ This tells the agent exactly what happens when this helper changes. The `true_me
 
 ```yaml
 semantic_profile:
-  schema_version: "1.1"
+  schema_version: "1.2"
   inheritance_scope: device
   metadata_origin:
     source: user
@@ -589,7 +590,7 @@ These three profiles cover the most common footguns in smart home AI orchestrati
 ```json
 {
   "semantic_profile": {
-    "schema_version": "1.1",
+    "schema_version": "1.2",
     "metadata_origin": {"source": "user", "confidence": 1.0},
     "semantic_tags": ["lighting.ambient"],
     "operational_boundaries": {
@@ -610,7 +611,7 @@ These three profiles cover the most common footguns in smart home AI orchestrati
 ```json
 {
   "semantic_profile": {
-    "schema_version": "1.1",
+    "schema_version": "1.2",
     "metadata_origin": {"source": "user", "confidence": 1.0},
     "semantic_tags": ["security.access_control"],
     "operational_boundaries": {
@@ -632,7 +633,7 @@ These three profiles cover the most common footguns in smart home AI orchestrati
 
 ```yaml
 semantic_profile:
-  schema_version: "1.1"
+  schema_version: "1.2"
   metadata_origin:
     source: user
     confidence: 1.0
@@ -673,7 +674,7 @@ A custom integration for a specific smart bulb brand. Supports RGB colour and sm
 ```json
 {
   "semantic_profile": {
-    "schema_version": "1.1",
+    "schema_version": "1.2",
     "metadata_origin": {"source": "developer", "confidence": 1.0},
     "semantic_tags": ["lighting.colour", "lighting.dimming", "lighting.ambient"],
     "operational_boundaries": {
@@ -703,7 +704,7 @@ This is the kernel plus two optional enrichment fields. Total authoring time: th
 
 ```yaml
 semantic_profile:
-  schema_version: "1.1"
+  schema_version: "1.2"
   metadata_origin:
     source: user
     confidence: 1.0
@@ -747,7 +748,7 @@ A sensor that tracks which entity or person last triggered a motion-sensitive li
 ```json
 {
   "semantic_profile": {
-    "schema_version": "1.1",
+    "schema_version": "1.2",
     "metadata_origin": {"source": "developer", "confidence": 1.0},
     "semantic_tags": [
       "diagnostic.causality",
@@ -868,7 +869,7 @@ Note how vendor namespace tags handle the implementation-specific details while 
 ```json
 {
   "semantic_profile": {
-    "schema_version": "1.1",
+    "schema_version": "1.2",
     "metadata_origin": {"source": "developer", "confidence": 1.0},
     "semantic_tags": [
       "tts.multilingual",
@@ -960,7 +961,7 @@ An operator adding a MESA profile to `lock.front_door` through a host MCP server
 
 ```yaml
 semantic_profile:
-  schema_version: "1.1"
+  schema_version: "1.2"
   metadata_origin:
     source: user
     confidence: 1.0
@@ -1012,7 +1013,7 @@ The same operator restricts a nursery camera. The physical device exposes three 
 
 ```yaml
 semantic_profile:
-  schema_version: "1.1"
+  schema_version: "1.2"
   inheritance_scope: device
   metadata_origin:
     source: user
@@ -1250,4 +1251,4 @@ When an agent is blocked from acting, it needs to communicate a reason to the us
 
 `none` is a positive assertion. Once declared, it tells every agent in every session that this entity is safe to act on without cascade caution. If you later add an automation that uses this entity as a trigger or condition, the declaration is now wrong. Use mesa-core's `TriggerValidator` to catch this automatically. Run it at startup and when automations change. If you cannot run validation, use `unknown` instead of `none` unless you are certain.
 
-*MESA - Metadata and Environment Semantics for Agents. Version 1.2. Getting Started Guide. Discussion and contributions are welcome via GitHub Issues.*
+*MESA - Metadata and Environment Semantics for Agents. Version 1.3. Getting Started Guide. Discussion and contributions are welcome via GitHub Issues.*

@@ -47,7 +47,7 @@ from mesa_core.trigger_validator import (
 )
 from mesa_core.validation import ValidationReport, validate_document, validate_or_raise
 
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 
 __all__ = [
     "DOMAIN_SAFETY_BASELINE",

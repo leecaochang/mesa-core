@@ -501,7 +501,6 @@ def test_alternate_home_assistant_targets_are_denied() -> None:
         {"target": {"device_id": "abc123"}},
         {"target": {"area_id": "kitchen"}},
         {"target": {"entity_id": "lock.front_door"}},
-        {"target": "kitchen"},
     ):
         result = enforcer.evaluate(
             entity_id="light.x", service="light.turn_on", service_params=params

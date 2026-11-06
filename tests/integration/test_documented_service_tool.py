@@ -112,7 +112,16 @@ def test_documented_handler_registers_on_mcp_sdk_fastmcp() -> None:
 
 @pytest.mark.parametrize(
     "reserved",
-    ["entity_id", "target", "area_id", "config_entry_id", "device_id", "floor_id", "label_id"],
+    [
+        "entity_id",
+        "target",
+        "area_id",
+        "config_entry_id",
+        "device_id",
+        "exclude",
+        "floor_id",
+        "label_id",
+    ],
 )
 def test_every_reserved_target_key_is_rejected(reserved: str) -> None:
     # Each of these can reach entities the call never evaluated, so an

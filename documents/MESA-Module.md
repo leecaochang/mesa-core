@@ -1,5 +1,5 @@
 # mesa-core: MESA Reference Module Proposal
-**Version:** 1.2 **Describes:** MESA 1.2, mesa-core 1.4.x **Document Type:** Technical Implementation Specification **Companion Documents:**
+**Version:** 1.3 **Describes:** MESA 1.3, mesa-core 1.5.x **Document Type:** Technical Implementation Specification **Companion Documents:**
 - MESA Overview
 - MESA Specification (Core)
 - MESA Enrichment
@@ -346,7 +346,7 @@ This default applies to unprofiled entities and supplies the fallback when profi
 - `read_only` and `prohibited`: block in enforced mode; warn and allow in advisory mode, preserving the reason describing nature or policy.
 - `confirm`: in advisory mode, warn and allow. In enforced interactive mode, return a confirmation challenge or redeem a valid token. Without an interaction channel, treat it as prohibited and emit a configuration warning.
 - `autonomous`: proceed if privacy and limits allow.
-5. Evaluate declared limits (profile limits plus active temporal value constraints) against service params.
+5. Evaluate declared limits (profile limits plus active temporal value constraints) against service params. A limit whose parameter is absent is skipped unless it declares `when_absent: refuse`, which blocks the call in enforced mode and warns in advisory mode.
 6. Return result with any warnings.
 
 ### 4.5 InheritanceResolver
@@ -527,7 +527,7 @@ entities_by_role(config: dict, expand_target=None) -> dict[str, set[str]]
 
 Given a single automation config dict, it returns the entity IDs referenced in each block, handling the singular/plural HA section keys (`trigger`/`triggers`, etc.) transparently. This is the canonical traversal for automation configs. Hosts building reverse-reference indexes (entity -> automations that reference it) SHOULD call `entities_by_role` over their own automation configs rather than reimplementing the entity-ID walk, so that HA-config-format knowledge stays in one place. mesa-core deliberately does not provide the reverse index, relationship graph, or script/scene traversal itself; those remain host concerns layered on this primitive.
 
-**Indirect entity references.** Automations can reference entities without naming them: device triggers and conditions carry a `device_id`, and purpose-specific triggers (HA 2026.7+) take `target` blocks with `area_id`, `floor_id`, `label_id`, or `device_id` selectors. Only the host can resolve these against the HA registries. Both `TriggerValidator` and `entities_by_role` accept an optional `expand_target(kind, ref)` callback, called once per selector found, that returns the entity IDs the selector covers in the deployment. Without the callback, indirectly referenced entities are invisible to validation, and a stale `none` declaration on such an entity will pass unflagged. Hosts SHOULD provide the callback (Specification Section 5.5).
+**Indirect entity references.** Automations can reference entities without naming them: device triggers and conditions carry a `device_id`, and purpose-specific triggers (HA 2026.7+) take `target` blocks with `area_id`, `floor_id`, `label_id`, or `device_id` selectors. Only the host can resolve these against the HA registries. Both `TriggerValidator` and `entities_by_role` accept an optional `expand_target(kind, ref)` callback, called once per selector found, that returns the entity IDs the selector covers in the deployment. Without the callback, indirectly referenced entities are invisible to validation, and a stale `none` declaration on such an entity will pass unflagged. Hosts SHOULD provide the callback (Specification Section 5.5). An `exclude` block in a target is not walked, because it names what the automation does not reach; the entities a selector expands to are not reduced by it, so the walk can over-report but never under-reports.
 
 **When to run validation:** Level 2 and Level 3 host servers SHOULD run `TriggerValidator.validate()` (or `avalidate()`) at startup and whenever the automation registry changes (detected via the `automation_reloaded` HA event). Validation results SHOULD be surfaced to operators through the server's configuration interface and included in `mesa_explain_profile` output.
 
@@ -602,6 +602,7 @@ lease_manager.sensor_state()  # binary_sensor.mesa_lease_active data
 - **Lazy expiry.** An expired lease never grants anything, so correctness never depends on a background task, but removal and the `mesa_lease_expired` event happen only when a lifecycle operation sweeps: `request()`, `release()`, `release_session()`, `expire()`, and `sensor_state()` sweep, while `active_leases()` filters expired entries out of its result without removing them or emitting, so it stays a side-effect-free read. Hosts SHOULD therefore call `expire()` (or `aexpire()`) periodically so events fire close to `expires_at` rather than relying on reads to produce them, and MUST call `release_session()` on session termination (Enrichment 21.4).
 - **Existing holder wins.** Overlapping requests from another session are denied per entity (partial grants are valid). Multi-agent priority preemption (Enrichment 21.6) ships in v2; `caller_priority` is accepted but unused.
 - **Fail-closed automation checks.** Entities monitored by `protected` automations are denied while the automation is active; without a `get_state` callback the automation is treated as active. `critical` automation scope (trigger, condition, and affected entities) is denied unconditionally. `cooperative` and `assertive` automations surface in `active_conflicts`.
+- **Scoped stores.** `register_mesa_tools` and `MesaToolHandlers` require the lease manager to use the same store as the retrieval tools. A host that gives each caller a filtered view constructs `MesaToolHandlers` directly with `store_is_scoped_view=True`, leaving the shared manager on the real store. The view's `get()` must return `None` for what it hides: a lease response has every automation the manager consulted tested that way, so a hidden automation is scrubbed from denial reasons, warnings, and conflicts.
 - **Events via callback.** `on_lease_event` receives the Enrichment 21.4 payload (`lease_id`, `entities`, `reason`, `timestamp`) for every ended lease; the host bridges it onto the HA event bus as `mesa_lease_expired`.
 
 Async variants: `arequest()`, `arelease()`, `arelease_session()`, `aexpire()`.
@@ -1023,9 +1024,9 @@ def build_call_ha_service(
 **Multi-target calls.** A MESA decision covers exactly the entity it was evaluated for. Home Assistant actions routinely target more than one, and Home Assistant itself recommends `device_id` for device-level actions and `config_entry_id` for config-entry-level ones, so this is ordinary integration work rather than an exotic case. `MesaEnforcer` refuses a call whose parameters carry an alternate target, because it cannot resolve a selector and must not approve a decision that would reach entities it never considered. The host owns that expansion:
 
 1. **Separate target from data.** Take `entity_id`, `device_id`, `area_id`,
-`floor_id`, `label_id`, `config_entry_id`, and any nested `target` block out of the service data. What remains is service data, and it is what carries the parameters declared limits are written against.
+`floor_id`, `label_id`, `config_entry_id`, `exclude`, and any nested `target` block out of the service data. What remains is service data, and it is what carries the parameters declared limits are written against. A non-mapping `target` stays: it selects nothing in a service call, it is a data field such as a notification recipient, and `MesaEnforcer` evaluates it as one, so a declared limit can constrain it. The enforcer still refuses a template string, which an action config renders into a target, and a list holding anything but plain values. It cannot tell whether a plain value names another entity, so a service that uses one that way is the host's to route.
 2. **Expand every selector to entities** through the HA registries, the same
-knowledge `expand_target` supplies to `TriggerValidator`. Remember that an entity inherits its device's area, so an area selector reaches entities whose own `area_id` is unset, and that a `device_id` naming a main device reaches the entities of its child devices too.
+knowledge `expand_target` supplies to `TriggerValidator`. Remember that an entity inherits its device's area, so an area selector reaches entities whose own `area_id` is unset, and that a `device_id` naming a main device reaches the entities of its child devices too. Subtract any `exclude` block (Home Assistant 2026.11) here: `MesaEnforcer` refuses a call still carrying one, and step 6 executes the list you produce, so ignoring the block would act on the entities it excluded. `async_extract_referenced_entity_ids` already applies it.
 3. **Require the expansion to be complete, and deny otherwise.** Home
 Assistant's target extraction reports what it could not resolve alongside what it could. Treat a failed expansion, an unknown device, area, floor, label, or config entry, or an empty resolved set as a denial. An empty set is the trap: "every decision allowed" is vacuously true of no decisions, so an unresolvable target would otherwise read as approval.
 4. **Evaluate each resolved entity** with the shared service data. Policy
@@ -1202,6 +1203,18 @@ The callback returns `list[dict]`, one entry per moment, each carrying at least 
 ### Added in Version 1.4
 
 **Parent-device inheritance level (MESA 1.2).** A sixth level for Home Assistant child devices, ranked between device and area: the optional `get_device_parent` host callback on `ProfileStore` and `InheritanceResolver`, `InheritanceResolver.parent_device()`, `parent_device` in explanation `provided_by_level`, and a `query(devices=...)` filter that also matches entities whose device's parent is listed. Parent profiles are ordinary device profiles, so storage, portability, and the profile `schema_version` (`1.1`) are unchanged. `mesa_version` now reports `1.2`.
+
+### Added in Version 1.5
+
+**Absent limit parameters (MESA 1.3).** Declared limits and temporal value constraints accept `when_absent: refuse`, which blocks a call that omits the limited parameter. Profile `schema_version` becomes `1.2`, and `migrate_profile` gains an additive 1.1 to 1.2 step.
+
+**Home Assistant 2026.11 target exclusions.** `HA_TARGET_SELECTOR_KEYS` gains `exclude`, so the enforcer refuses a call carrying one. `HA_AUTOMATION_SELECTOR_KEYS` does not, and `entities_by_role` no longer counts what a target excludes as a reference.
+
+**Non-mapping targets.** A plain `target` value is evaluated as service data, not refused. See "Multi-target calls" in Section 6.2.
+
+**Policy failure audit.** Every `policy_unavailable` refusal emits an `enforcement_decision` audit event, with `details.cause` telling the paths apart.
+
+**Scoped lease views.** `MesaToolHandlers` enforces the same-store rule, and accepts `store_is_scoped_view=True` for per-caller views. See Section 4.10.
 
 ### Deferred to Version 2
 

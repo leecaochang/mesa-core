@@ -299,6 +299,25 @@ def _with_root(key: str, value: Any) -> dict[str, Any]:
     return doc
 
 
+def _with_limit(extra: dict[str, Any]) -> dict[str, Any]:
+    limit = {"service": "light.turn_on", "parameter": "brightness", "max_value": 1, **extra}
+    entry = {
+        "id": "cap",
+        "predicate": {"entity": "input_boolean.x", "operator": "eq", "value": True},
+        "limit": limit,
+    }
+    return _with_sp("operational_boundaries", {"declared_limits": [entry]})
+
+
+def _with_effect(effect: dict[str, Any]) -> dict[str, Any]:
+    entry = {
+        "id": "night",
+        "condition": {"type": "day_of_week", "days": ["mon"]},
+        "effect": effect,
+    }
+    return _with_sp("operational_boundaries", {"temporal_constraints": [entry]})
+
+
 def _with_time_range(start: Any, end: Any) -> dict[str, Any]:
     doc = copy.deepcopy(_RICH_ROOT)
     cond = doc["semantic_profile"]["operational_boundaries"]["temporal_constraints"][0]["condition"]
@@ -358,6 +377,35 @@ _REGRESSION_CASES: list[tuple[str, dict[str, Any], bool]] = [
         False,
     ),
     ("capability_not_object", _with_sp("capability_semantics", "local_only"), False),
+    # MESA 1.3: when_absent is a safety enum on limits and temporal value effects.
+    ("when_absent_refuse", _with_limit({"when_absent": "refuse"}), True),
+    ("when_absent_allow", _with_limit({"when_absent": "allow"}), True),
+    ("when_absent_unknown", _with_limit({"when_absent": "deny"}), False),
+    ("when_absent_null", _with_limit({"when_absent": None}), False),
+    ("when_absent_nonstring", _with_limit({"when_absent": True}), False),
+    (
+        "effect_when_absent",
+        _with_effect(
+            {
+                "service": "light.turn_on",
+                "parameter": "brightness",
+                "max_value": 1,
+                "when_absent": "refuse",
+            }
+        ),
+        True,
+    ),
+    (
+        "effect_when_absent_without_service",
+        _with_effect({"control_mode": "confirm", "when_absent": "refuse"}),
+        False,
+    ),
+    ("effect_when_absent_alone", _with_effect({"when_absent": "refuse"}), False),
+    (
+        "effect_when_absent_without_bound",
+        _with_effect({"service": "s.t", "parameter": "p", "when_absent": "refuse"}),
+        False,
+    ),
 ]
 
 

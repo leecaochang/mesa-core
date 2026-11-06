@@ -2,6 +2,35 @@
 
 All notable changes to mesa-core. The MESA specification documents carry their own version history.
 
+## 1.5.0 - 2026-11-06
+
+Implements MESA 1.3. The profile format `schema_version` becomes `1.2`, an additive change: stored 1.1 profiles stay valid and mean the same thing.
+
+### Added
+
+- **`when_absent` on declared limits and temporal value constraints.** A limit applied only when a call carried its parameter, so a limit on `brightness` passed a bare `light.turn_on` that restored a higher level, and a call using `brightness_pct` or `brightness_step`. `when_absent: refuse` blocks such a call, because its effective value is unknown. The default, `allow`, keeps the existing behavior. Anything else fails validation, and a malformed value that reaches enforcement refuses.
+- `MesaToolHandlers` accepts `store_is_scoped_view=True` for a per-caller view of the store its lease manager uses.
+
+### Changed
+
+- **Home Assistant 2026.11 `exclude` is refused on service calls.** `HA_TARGET_SELECTOR_KEYS` gains `exclude`, so the enforcer denies a call carrying one as `contradictory_target`. It only subtracts from a target, so this was never a way to reach another entity, but the call could do less than the decision described. `HA_AUTOMATION_SELECTOR_KEYS` does not gain it. A host must apply the block when expanding a target and remove it before evaluating.
+- **A plain `target` value is service data.** `service_params` carrying a scalar `target`, or a list of scalars, is evaluated rather than refused, so declared limits and confirmation challenges now see it. A template string and a list holding anything else are still refused, as is a `target` mapping with a selector.
+- `MesaToolHandlers` now raises `MesaError` when its lease manager uses a different store, as `register_mesa_tools` already did.
+- MCP responses report `mesa_version: "1.3"`.
+
+### Fixed
+
+- **Lease responses named automations hidden by a scoped store.** The scrub walked `store.entity_keys()`, which a scoped store does not list its hidden entries in. `LeaseResponse.automations_consulted` now names what the manager checked, and an automation the handlers' store does not return is scrubbed.
+- **One `policy_unavailable` path emitted no audit event.** A profile that could not be resolved was refused silently. Both paths now emit `enforcement_decision`, and `details.cause` is `policy_resolution_failed` or `unrecognized_control_mode`.
+- **`entities_by_role` counted excluded entities as references.** A target's `exclude` block is no longer walked, so an entity an automation excludes is not reported against `triggers_automations: none`. Entities a selector expands to are not reduced by the block, so the walk can still over-report, which is the safe direction.
+
+### Compatibility
+
+- A host whose handlers use a per-caller store view must pass `store_is_scoped_view=True` when constructing `MesaToolHandlers`, or construction raises. Its view's `get()` must return `None` for what it hides.
+- A host that added its own audit row for `policy_unavailable` should remove it, or rows will double.
+- A host that removed a scalar `target` before evaluating can stop, so limits on it apply.
+- A reader older than schema 1.2 ignores `when_absent` and does not refuse. Upgrade readers before relying on it.
+
 ## 1.4.0 - 2026-10-23
 
 Implements MESA 1.2. The profile format `schema_version` remains `1.1`; stored profiles and export archives are unchanged.

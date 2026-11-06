@@ -55,7 +55,7 @@ def test_query_filters_domains_and_excludes_untrusted_by_default() -> None:
     store.set("light.inferred", make_profile("light.inferred", origin="inferred_ai"))
 
     result = call(registry, "mesa_query_profiles", domains=["light"])
-    assert result["mesa_version"] == "1.2"
+    assert result["mesa_version"] == "1.3"
     assert result["total_matched"] == 1
     assert result["results"][0]["entity_id"] == "light.a"
 
@@ -272,7 +272,7 @@ def _lease_registry() -> DictToolRegistry:
 def test_lease_request_and_release_round_trip() -> None:
     registry = _lease_registry()
     granted = call(registry, "mesa_request_lease", entities=["light.x"], duration_seconds=10)
-    assert granted["mesa_version"] == "1.2"
+    assert granted["mesa_version"] == "1.3"
     assert granted["granted"] and granted["entities_granted"] == ["light.x"]
 
     released = call(registry, "mesa_release_lease", lease_id=granted["lease_id"])

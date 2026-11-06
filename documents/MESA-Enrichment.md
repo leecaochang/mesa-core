@@ -1,5 +1,5 @@
 # MESA Enrichment Specification
-**Version:** 1.2 **Document Type:** Formal Schema Reference (companion to the MESA Specification)
+**Version:** 1.3 **Document Type:** Formal Schema Reference (companion to the MESA Specification)
 
 ---
 
@@ -507,4 +507,4 @@ Upon receiving a preemption notification, the preempted agent MUST follow its de
 
 ---
 
-*MESA - Metadata and Environment Semantics for Agents. Version 1.2. Enrichment specification. See also: MESA Overview, MESA Specification (Core), MESA Getting Started Guide, and mesa-core Module Proposal. Discussion and contributions are welcome via GitHub Issues.*
+*MESA - Metadata and Environment Semantics for Agents. Version 1.3. Enrichment specification. See also: MESA Overview, MESA Specification (Core), MESA Getting Started Guide, and mesa-core Module Proposal. Discussion and contributions are welcome via GitHub Issues.*

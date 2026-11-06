@@ -1,5 +1,5 @@
 # MESA Specification
-**Version:** 1.2.0 **Document Type:** Formal Schema Reference
+**Version:** 1.3.0 **Document Type:** Formal Schema Reference
 
 ---
 
@@ -251,7 +251,7 @@ MESA is additive. Systems that do not expose `semantic_profile` remain fully con
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `schema_version` | `string` | SHOULD | MESA schema version. Currently `1.1`. |
+| `schema_version` | `string` | SHOULD | MESA schema version. Currently `1.2`. |
 | `profile_version` | `string` | SHOULD | Version of this specific profile. Implementor-defined. |
 | `metadata_origin` | `object` | RECOMMENDED | Profile provenance. See Section 5.3. When absent, the default depends on the profile's location: profiles loaded from an integration's `mesa_profile.json` default to `source: developer`; profiles from any other location default to `source: unknown`. See Section 5.3. |
 | `semantic_tags` | `array<string>` | RECOMMENDED | Namespaced tags classifying this component. See Appendix A. |
@@ -348,7 +348,7 @@ Human-authored profiles do not decay with age, but the deployment can change aro
 
 When an invalidation trigger fires, a host MCP server SHOULD surface a warning. It MUST NOT silently discard the profile.
 
-**Live validation of `triggers_automations`.** Automation configurations change frequently. A static `triggers_automations: none` declaration can become stale the moment an operator adds a new automation referencing that entity. Level 2 and Level 3 host implementations SHOULD periodically run a live cross-reference of declared `none` profiles against the actual HA automation registry. Any entity declared `none` that is found in an automation trigger or condition block SHOULD generate a staleness warning surfaced to the operator. Automations can reference entities indirectly, through device triggers and conditions (`device_id`) and the target selectors of purpose-specific triggers (`area_id`, `floor_id`, `label_id`, `device_id`); when cross-referencing, hosts SHOULD expand such selectors to their member entities using the HA registries, because raw configuration scanning sees only explicit `entity_id` references. A `device_id` that names a main device also reaches the entities of its child devices (Section 5.6), so its expansion includes them. The mesa-core module provides `TriggerValidator` for this purpose.
+**Live validation of `triggers_automations`.** Automation configurations change frequently. A static `triggers_automations: none` declaration can become stale the moment an operator adds a new automation referencing that entity. Level 2 and Level 3 host implementations SHOULD periodically run a live cross-reference of declared `none` profiles against the actual HA automation registry. Any entity declared `none` that is found in an automation trigger or condition block SHOULD generate a staleness warning surfaced to the operator. Automations can reference entities indirectly, through device triggers and conditions (`device_id`) and the target selectors of purpose-specific triggers (`area_id`, `floor_id`, `label_id`, `device_id`); when cross-referencing, hosts SHOULD expand such selectors to their member entities using the HA registries, because raw configuration scanning sees only explicit `entity_id` references. A `device_id` that names a main device also reaches the entities of its child devices (Section 5.6), so its expansion includes them. An `exclude` block in a target (Home Assistant 2026.11) names what the target leaves out and is not a reference. The mesa-core module provides `TriggerValidator` for this purpose.
 
 **Entity renames.** Profiles are keyed by entity ID, and operators rename entities freely. A profile whose entity ID no longer exists in the HA registry is orphaned: it applies to nothing, and the renamed entity silently loses its profile, falling back to device, area, integration, and domain inheritance and deployment defaults. Scoped profiles are unaffected by entity renames: a device-scope profile is keyed by the HA device registry ID, which survives renames of the entities the device owns. Host servers SHOULD detect orphaned profiles by checking stored keys against the entity registry, at startup and on `entity_registry_updated` events, surface them to the operator, and offer re-keying. Host servers MAY additionally record HA registry unique IDs alongside entity IDs to survive renames automatically.
 
@@ -392,7 +392,7 @@ MESA profiles follow a six-level inheritance hierarchy. This reduces per-entity 
 ```json
 {
   "semantic_profile": {
-    "schema_version": "1.1",
+    "schema_version": "1.2",
     "metadata_origin": {"source": "developer", "confidence": 1.0},
     "inheritance_scope": "integration",
     "semantic_tags": ["lighting.ambient"],
@@ -634,6 +634,7 @@ Declared limits express conditional value constraints. An agent SHOULD treat the
 | `max_value` | `number` | CONDITIONAL | Maximum permitted value. |
 | `min_value` | `number` | CONDITIONAL | Minimum permitted value. |
 | `permitted_values` | `array` | CONDITIONAL | Explicit list for discrete parameters. |
+| `when_absent` | `enum` | MAY | `allow` or `refuse`: what to do when a call does not carry `parameter`. Default: `allow`. |
 
 ```json
 {
@@ -655,6 +656,8 @@ Declared limits express conditional value constraints. An agent SHOULD treat the
   ]
 }
 ```
+
+**Absent parameters.** A limit constrains the value a call states. A call that omits `parameter` states no value, yet it can still produce one: a bare `light.turn_on` can restore a last brightness above the limit. With `when_absent: allow`, the default, such a call is not measured against the limit. With `when_absent: refuse`, the effective value is unknown, so a Level 3 server in `enforced` mode MUST reject the call, and in `advisory` mode SHOULD warn. Refusal only applies while the limit's `predicate` is true and the call's service matches. Matching stays exact (Section 6): `brightness_pct` does not satisfy a limit on `brightness`. A host that can determine the effective value MAY add it to the parameters it evaluates, which is also how an equivalent parameter can be measured against the limit.
 
 ### 6.5 Temporal Constraints Schema
 
@@ -692,6 +695,7 @@ When a temporal condition cannot be evaluated (the referenced entity does not ex
 | `max_value` | `number` | CONDITIONAL | Maximum permitted value while condition is true. |
 | `min_value` | `number` | CONDITIONAL | Minimum permitted value while condition is true. |
 | `permitted_values` | `array` | CONDITIONAL | Explicit list of permitted values while condition is true. |
+| `when_absent` | `enum` | MAY | `allow` or `refuse`, as in Section 6.4. Requires `service`. Default: `allow`. |
 
 An effect MUST contain at least one field. An effect MAY contain both a `control_mode` modification and a value constraint simultaneously.
 
@@ -895,7 +899,7 @@ Agents MUST prioritise integrations with MESA profiles over unprofiled alternati
 ```json
 {
   "semantic_profile": {
-    "schema_version": "1.1",
+    "schema_version": "1.2",
     "profile_version": "1.0",
     "metadata_origin": {"source": "developer", "confidence": 1.0},
     "semantic_tags": ["media.multiroom", "media.lossless"],
@@ -1004,7 +1008,7 @@ All filter fields are optional and combinable. An empty query returns all availa
 
 | Field | Always present | Description |
 |---|---|---|
-| `mesa_version` | Yes | The MESA version the responding server implements (for example `1.2`). Each profile's format version is its own `schema_version` (Section 5.2), which can be lower. |
+| `mesa_version` | Yes | The MESA version the responding server implements (for example `1.3`). Each profile's format version is its own `schema_version` (Section 5.2), which can be lower. |
 | `caller_context` | Yes (when authenticated) | Caller identity and roles. See Section 9.4. |
 | `results` | Yes | Array of profile result objects. |
 | `total_matched` | Yes | Total matching profiles before pagination. |
@@ -1149,7 +1153,7 @@ No formal governance body exists at the time of this writing. This section docum
 
 **Forward and backward compatibility.** When mesa-core encounters a profile with a `schema_version` higher than its own, it MUST parse all fields it recognises and silently ignore unknown fields. When it encounters a profile with a lower `schema_version`, it MUST parse it as-is without attempting migration. The mesa-core `migrate_profile()` utility (see mesa-core Module Proposal) handles explicit version migration when the operator requests it. Profiles are never silently migrated or rewritten.
 
-**Unknown enum values.** The ignore-unknown rule above applies to fields, not to values. An unknown value in a safety-relevant enum (`control_mode`, `privacy_classification.level`, `inheritance_scope`) MUST fail validation loudly: the document is rejected, never silently coerced to a known value, and never degraded to a lower-impact reading. Rejection is the safe reading because an unresolved profile grants nothing, while a coerced one could grant the wrong thing. A practical consequence: a reader at schema version 1.0 rejects a document declaring `inheritance_scope: device` (introduced in 1.1). Deployments that share one profile store across implementations at different versions MUST upgrade readers before writers begin using new enum values.
+**Unknown enum values.** The ignore-unknown rule above applies to fields, not to values. An unknown value in a safety-relevant enum (`control_mode`, `privacy_classification.level`, `inheritance_scope`, `when_absent`) MUST fail validation loudly: the document is rejected, never silently coerced to a known value, and never degraded to a lower-impact reading. Rejection is the safe reading because an unresolved profile grants nothing, while a coerced one could grant the wrong thing. A practical consequence: a reader at schema version 1.0 rejects a document declaring `inheritance_scope: device` (introduced in 1.1). Deployments that share one profile store across implementations at different versions MUST upgrade readers before writers begin using new enum values.
 
 **Reference implementation.** mesa-core is the reference implementation of the MESA Specification. When the specification and mesa-core behaviour diverge, the specification takes precedence. Discrepancies should be reported as issues in the mesa-core repository. mesa-core ships a canonical JSON Schema file (`mesa_profile.schema.json`) that is the machine-readable equivalent of the schema tables in this document. Third-party implementations MAY use this schema file for validation rather than reimplementing from prose.
 
@@ -1303,6 +1307,14 @@ Conformance levels are declared by host implementations (Section 2). Table B.1 l
 
 **How the documents are versioned.** This document's version is the MESA version, and the companion Enrichment document shares it because section numbering is continuous and both are normative. The Overview, Getting Started Guide, and mesa-core Module Proposal carry their own document versions, because they are revised on their own schedule, and each states which MESA version it describes in its header. mesa-core's package version is independent of all of these; the profile format version is `schema_version` (Section 5.2), which changes only when the format does.
 
+### 1.3.0
+
+A minor revision. The profile format gains one optional field, so `schema_version` becomes `1.2`. Every valid 1.1 document remains valid and means the same thing.
+
+- **Absent limit parameters.** Declared limits and temporal value constraints gain `when_absent` (Sections 6.4, 6.5). `refuse` rejects a call that omits the limited parameter, whose effective value is unknown. The default, `allow`, keeps the 1.2 behaviour. A reader older than 1.2 ignores the field, as Section 23 requires, and so does not refuse; upgrade readers before relying on it. `when_absent` joins the safety-relevant enums.
+- **Target exclusions.** An `exclude` block in a Home Assistant 2026.11 target names what the target leaves out. It is not a reference for cross-referencing (Section 5.5).
+- **Retrieval API.** The response `mesa_version` is now `1.3`.
+
 ### 1.2.0
 
 A minor revision. The profile format is unchanged: `schema_version` remains `1.1`, stored documents need no migration, and every 1.2 profile document is a valid 1.1 document.
@@ -1331,7 +1343,7 @@ Three clarifications, all merged into the running text of Sections 5.7 and 9.5; 
 
 ---
 
-*MESA - Metadata and Environment Semantics for Agents. Version 1.2.0. Core specification. See also: MESA Overview, MESA Enrichment, MESA Getting Started Guide, and mesa-core Module Proposal. Discussion and contributions are welcome via GitHub Issues.*
+*MESA - Metadata and Environment Semantics for Agents. Version 1.3.0. Core specification. See also: MESA Overview, MESA Enrichment, MESA Getting Started Guide, and mesa-core Module Proposal. Discussion and contributions are welcome via GitHub Issues.*
 
 ## Interpretation notes from the October 2026 audit
 
