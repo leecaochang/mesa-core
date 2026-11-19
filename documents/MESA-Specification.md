@@ -1,5 +1,5 @@
 # MESA Specification
-**Version:** 1.3.0 **Document Type:** Formal Schema Reference
+**Version:** 1.3.1 **Document Type:** Formal Schema Reference
 
 ---
 
@@ -380,6 +380,8 @@ MESA profiles follow a six-level inheritance hierarchy. This reduces per-entity 
 - `control_mode` follows the additional tightening rule: a higher-level profile may tighten freely but may loosen an inherited `confirm` only via the operator loosening override (Rule A, Section 5.7). `prohibited` and `read_only` MUST NOT be loosened at any level. The loosening override, and the `override_triggers_automations` exception of Rule B, remain valid at entity scope only: a device-level or parent-device-level profile may tighten for every entity it governs, but never loosen.
 - `triggers_automations: likely` is sticky upward: if any profile at any level declares `likely`, the effective value is `likely` regardless of lower-level declarations. `none` is not sticky: a lower-level `likely` overrides a higher-level `none` because the presence of any known automation trigger is more informative than an assertion of absence. `deployment_defined` at entity scope may override `likely` from higher levels when accompanied by `override_triggers_automations: true`, representing the operator's precise knowledge of their specific deployment. To override a sticky `likely` from a higher level, an entity-level profile may declare `triggers_automations: none` alongside `override_triggers_automations: true` with a `human_reason` string explaining the exception.
 - `privacy_classification.level` follows the more-restrictive-wins rule from Section 7.
+- A `prohibited` or `read_only` floor from Section 5.8 (the built-in safety baseline or a `deployment_defaults` value) is replaced only by a trusted `control_mode` declaration at entity, device, or domain scope, which names the entity or its domain. Area, parent-device, and integration profiles cover entities their author may not have had in mind, such as a lock assigned to an area after its profile was written, so against such a floor they can only tighten. A `confirm` floor is replaced by a trusted declaration at any scope.
+- **Area changes can loosen in both directions.** Moving an entity out of a profiled area can drop a restriction, and moving it into one can apply that area's `autonomous` declaration to a domain whose floor is `confirm`. A host that gates area assignment changes MUST check both directions. A host can preview the effect by resolving the entity against a temporary area mapping before applying the change.
 
 **Practical example:** An integration declares `control_mode: autonomous` in its distributed profile for all its light entities. An operator assigns all bedroom lights to the bedroom area. The bedroom area profile declares `control_mode: confirm`. All bedroom lights now require confirmation, even though the integration declared them autonomous. The operator has tightened the restriction at the area level. No per-entity profiles are needed.
 
@@ -439,7 +441,7 @@ An MCP server integrating mesa-core MAY expose a `deployment_defaults` configura
 
 | Field | Type | Description |
 |---|---|---|
-| `default_control_mode` | `enum` | Default `control_mode` for unprofiled entities and undeclared fields, subject to the control-mode floor below. Replaced by an explicit trusted control declaration; unrelated profile fields do not remove this fallback. Default: `confirm`. |
+| `default_control_mode` | `enum` | Default `control_mode` for unprofiled entities and undeclared fields, subject to the control-mode floor below. Replaced by an explicit trusted control declaration (for a `prohibited` or `read_only` value, only one at entity, device, or domain scope); unrelated profile fields do not remove this fallback. Default: `confirm`. |
 | `domain_overrides` | `object` | Per-domain defaults. Keys are HA domain strings. Values are objects with `control_mode` and `triggers_automations` fields. |
 | `triggers_automations_domains` | `array<string>` | Domains for which unprofiled entities should default `triggers_automations: likely`. Recommended: include `input_boolean`, `input_select`, `input_number`, `counter`, `timer`. |
 
@@ -463,9 +465,9 @@ An MCP server integrating mesa-core MAY expose a `deployment_defaults` configura
 }
 ```
 
-When `deployment_defaults` is configured, it acts as a floor below all MESA profile inheritance levels. Any profile at any level takes precedence. Tightening-only rules apply: domain overrides cannot loosen a profile-declared `prohibited`.
+When `deployment_defaults` is configured, it acts as a floor below all MESA profile inheritance levels. A trusted declaration at any level takes precedence, except that a `prohibited` or `read_only` default yields only to a trusted declaration at entity, device, or domain scope. Tightening-only rules apply: domain overrides cannot loosen a profile-declared `prohibited`.
 
-**Built-in domain safety baseline.** When no `deployment_defaults` are configured, host implementations SHOULD apply the following baseline to unprofiled entities. If profiles exist without a trusted control declaration, preserve the stricter of this baseline and `confirm`. This prevents non-interactive agents from being completely locked out of well-understood low-risk domains before any profiles have been authored.
+**Built-in domain safety baseline.** When no `deployment_defaults` are configured, host implementations SHOULD apply the following baseline to unprofiled entities. If profiles exist without a trusted control declaration, preserve the stricter of this baseline and `confirm`. A `prohibited` baseline is replaced only by a trusted declaration at entity, device, or domain scope (Section 5.6); a trusted area, parent-device, or integration declaration does not replace it, so a lock assigned to an `autonomous` area stays `prohibited`. Conforming implementations SHOULD report a held-back declaration as a warning in `mesa_explain_profile`. This prevents non-interactive agents from being completely locked out of well-understood low-risk domains before any profiles have been authored.
 
 | Domain | Built-in default `control_mode` | Rationale |
 |---|---|---|
@@ -528,7 +530,7 @@ Operational boundaries are machine-readable policy declarations. They describe h
 | Field | Type | Req | Description |
 |---|---|---|---|
 | `enforcement_mode` | `enum` | MAY | `advisory` (default) or `enforced`. In `enforced` mode a Level 3 server rejects violating calls. |
-| `control_reason` | `string` | RECOMMENDED for `confirm` and `prohibited` | A short human-readable explanation of why this `control_mode` was chosen. Helps agents communicate refusals meaningfully. Examples: "triggers alarm automation", "medical device - operator review required", "physically dangerous if reversed". |
+| `control_reason` | `string` | RECOMMENDED for `confirm` and `prohibited` | A short human-readable explanation of why this `control_mode` was chosen. Helps agents communicate refusals meaningfully. Resolved under Rule D among profiles that declare the effective `control_mode` or no `control_mode`; a reason from a profile whose mode did not take effect is not reported. Examples: "triggers alarm automation", "medical device - operator review required", "physically dangerous if reversed". |
 | `declared_limits` | `array<object>` | MAY | Conditional value constraints. See Section 6.4. |
 | `temporal_constraints` | `array<object>` | MAY | Time-based boundary modifications. See Section 6.5. |
 
@@ -1307,6 +1309,14 @@ Conformance levels are declared by host implementations (Section 2). Table B.1 l
 
 **How the documents are versioned.** This document's version is the MESA version, and the companion Enrichment document shares it because section numbering is continuous and both are normative. The Overview, Getting Started Guide, and mesa-core Module Proposal carry their own document versions, because they are revised on their own schedule, and each states which MESA version it describes in its header. mesa-core's package version is independent of all of these; the profile format version is `schema_version` (Section 5.2), which changes only when the format does.
 
+### 1.3.1
+
+A patch revision that narrows one rule in the safe direction. The profile format is unchanged and `schema_version` remains `1.2`. The response `mesa_version` remains `1.3`.
+
+- **Scope of floor replacement.** A `prohibited` or `read_only` floor from Section 5.8 is now replaced only by a trusted `control_mode` declaration at entity, device, or domain scope (Sections 5.6, 5.8). Before, a trusted declaration at any scope replaced it, so a lock assigned to an area whose profile said `autonomous`, or even `confirm`, lost its `prohibited` baseline, as did a lock part under a main device declaring `autonomous` and a lock created by an integration whose sidecar declared it. Those declarations now tighten only. A `confirm` floor is unaffected.
+- **Area changes.** Section 5.6 now states that moving an entity into an area can loosen it, so hosts that gate area changes check both directions.
+- **Reason follows mode.** The effective `control_reason` comes from a profile that declared the effective `control_mode`, or from one that declares no mode (Rule D otherwise). A reason written for a mode that lost under Rule A, or for a declaration held back by a floor, is not reported (Section 6.1).
+
 ### 1.3.0
 
 A minor revision. The profile format gains one optional field, so `schema_version` becomes `1.2`. Every valid 1.1 document remains valid and means the same thing.
@@ -1343,13 +1353,13 @@ Three clarifications, all merged into the running text of Sections 5.7 and 9.5; 
 
 ---
 
-*MESA - Metadata and Environment Semantics for Agents. Version 1.3.0. Core specification. See also: MESA Overview, MESA Enrichment, MESA Getting Started Guide, and mesa-core Module Proposal. Discussion and contributions are welcome via GitHub Issues.*
+*MESA - Metadata and Environment Semantics for Agents. Version 1.3.1. Core specification. See also: MESA Overview, MESA Enrichment, MESA Getting Started Guide, and mesa-core Module Proposal. Discussion and contributions are welcome via GitHub Issues.*
 
 ## Interpretation notes from the October 2026 audit
 
 These notes resolve inconsistent wording in the sections above without changing the MESA 1.1 document version:
 
-- Rule E applies per field. An entity with profiles but no trusted `control_mode` declaration uses the stricter of `confirm` and its deployment/domain baseline. Global permissive defaults do not weaken the built-in lock/alarm prohibition without an explicit domain override. Trusted control declarations replace fallback values and then follow Rule A; inferred declarations never loosen the fallback.
+- Rule E applies per field. An entity with profiles but no trusted `control_mode` declaration uses the stricter of `confirm` and its deployment/domain baseline. Global permissive defaults do not weaken the built-in lock/alarm prohibition without an explicit domain override. Trusted control declarations replace fallback values and then follow Rule A; inferred declarations never loosen the fallback. A `prohibited` or `read_only` fallback is replaced only by a trusted declaration at entity, device, or domain scope (MESA 1.3.1).
 - In Rule B, “higher level” means a broader inheritance scope, not a higher numbered specificity. Select the trusted tier before applying stickiness and overrides; an override flag itself must be trusted. Inferred helper declarations resolve to `likely` even if they say `unknown` or `deployment_defined`.
 - Rule C permits inferred privacy levels to tighten access. Rule 3 still excludes unconfirmed inferred role lists, `is_minor` and denial response modes from access decisions. Trusted `deny_for` and `restricted_for` lists accumulate across scopes, and trusted `is_minor: true` cannot be cleared by another layer. Unknown access-role keys are preserved and ignored by older readers.
 - `time_range` is start-inclusive and end-exclusive. Midnight crossing is supported; equal bounds mean the full day. Evaluation uses the timezone of the supplied datetime (host local time when omitted). Native HA predicates that cannot be evaluated remain active; a host seeking exact native-condition semantics must supply that integration outside the reference library.

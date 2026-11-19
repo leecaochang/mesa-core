@@ -162,11 +162,11 @@ def test_parent_level_cannot_use_the_loosening_override() -> None:
     assert store.get_effective(OUTLET).operational_boundaries.control_mode == ControlMode.CONFIRM
 
 
-def test_parent_trusted_control_replaces_the_baseline_like_a_device_profile() -> None:
-    # A trusted parent declaration is the product-wide operator intent, so it
-    # replaces the lock baseline exactly as a device profile does for the
-    # device's own entities (Spec 5.8). Hosts enabling the callback inherit
-    # this for every existing main-device profile.
+def test_parent_trusted_control_cannot_lift_the_baseline_a_device_profile_can() -> None:
+    # A device profile names the physical object, so it replaces the lock
+    # baseline. A parent profile covers a whole product, and parts reach it
+    # when an integration moves them onto child devices with no operator
+    # action, so it can only tighten a prohibited floor (Spec 5.8).
     store = make_store(get_entity_device={"lock.door_bolt": "bolt"}.get)
     store.set_device_profile(
         "bolt", make_profile("bolt", boundaries={"control_mode": "autonomous"})
@@ -181,7 +181,8 @@ def test_parent_trusted_control_replaces_the_baseline_like_a_device_profile() ->
         "door", make_profile("door", boundaries={"control_mode": "autonomous"})
     )
     parent_level = store.get_effective("lock.door_bolt").operational_boundaries.control_mode
-    assert parent_level == device_level == ControlMode.AUTONOMOUS
+    assert device_level == ControlMode.AUTONOMOUS
+    assert parent_level == ControlMode.PROHIBITED
 
 
 def test_main_device_entities_get_one_device_layer() -> None:

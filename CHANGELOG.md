@@ -2,6 +2,21 @@
 
 All notable changes to mesa-core. The MESA specification documents carry their own version history.
 
+## 1.5.1 - 2026-11-19
+
+Implements MESA 1.3.1. The profile format and `mesa_version` are unchanged.
+
+### Fixed
+
+- **A broad trusted profile lifted the lock and alarm safety floor.** Any trusted `control_mode` at any inheritance level replaced the `prohibited` baseline, so an unprofiled lock assigned to an area whose user profile said `autonomous` resolved to `autonomous`, and an area saying `confirm` loosened it to `confirm`. A main-device profile did the same to a lock on a child device, and an integration sidecar to every lock it created. A `prohibited` or `read_only` floor, built-in or from `deployment_defaults`, is now replaced only by a trusted declaration at entity, device, or domain scope. Area, parent-device, and integration declarations tighten such a floor but do not lift it, and `explain` reports a warning naming the held-back scope. A `confirm` floor is still replaced by a trusted declaration at any scope.
+- **Refusals quoted a reason for a mode that did not win.** `control_reason` resolved under Rule D independently of `control_mode`, so a lock held at its floor was refused with "Entity is prohibited by policy: smoke test area", the reason from the held-back area profile, and an area's `confirm` reason was quoted when a domain profile's `prohibited` won. A reason now comes only from a layer that declared the effective mode or declared no mode at all. When none qualifies, the refusal names the entity.
+
+### Compatibility
+
+- An entity with a `prohibited` or `read_only` floor that relied on an area, parent-device, or integration profile to relax it now resolves to the floor. Declare the intended mode at entity, device, or domain scope instead.
+- This reverses the 1.4.0 note that a trusted main-device `autonomous` lifts a child lock's baseline. A device profile on the lock's own device still does.
+- Moving an entity into an area can still loosen a domain whose floor is `confirm`. A host gating area changes should check both directions.
+
 ## 1.5.0 - 2026-11-06
 
 Implements MESA 1.3. The profile format `schema_version` becomes `1.2`, an additive change: stored 1.1 profiles stay valid and mean the same thing.

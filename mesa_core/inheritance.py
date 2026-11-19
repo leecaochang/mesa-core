@@ -14,7 +14,13 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from mesa_core.conflict import ConflictResolver, FieldExplanation, Layer, _is_trusted_for
+from mesa_core.conflict import (
+    ConflictResolver,
+    FieldExplanation,
+    Layer,
+    _is_trusted_for,
+    control_reason_layers,
+)
 from mesa_core.exceptions import HostCallbackError
 from mesa_core.profile import (
     CONTROL_MODE_RANK,
@@ -28,6 +34,11 @@ from mesa_core.profile import (
 
 if TYPE_CHECKING:
     from mesa_core.store import DeploymentDefaults, ProfileStore
+
+# Levels whose trusted control_mode may replace a prohibited or read_only floor
+# (Spec 5.8). Area, parent-device, and integration profiles cover entities their
+# author may not have had in mind, so they can only tighten such a floor.
+FLOOR_LIFTING_LEVELS = frozenset({"entity", "device", "domain"})
 
 
 @dataclass
@@ -233,27 +244,53 @@ class InheritanceResolver:
         defaults = self.store.get_deployment_defaults()
 
         # Unconfirmed inferred declarations may tighten, never loosen, the
-        # applicable baseline. Trusted declarations explicitly replace it.
+        # applicable baseline. Trusted declarations explicitly replace it, except
+        # that a prohibited or read_only floor yields only to a declaration that
+        # names the entity, its device, or its domain (Spec 5.8): a broad area,
+        # parent-device, or integration profile can tighten it but not lift it.
         control_path = "operational_boundaries.control_mode"
-        trusted_control = any(
-            (layer.profile.declared(control_path) and _is_trusted_for(layer.profile, control_path))
+        trusted_layers = [
+            layer
+            for layer in layers
+            if (
+                layer.profile.declared(control_path)
+                and _is_trusted_for(layer.profile, control_path)
+            )
             or (
                 layer.level == "integration"
                 and "control_mode"
                 in layer.profile.raw.get("semantic_profile", {}).get("capability_semantics", {})
                 and _is_trusted_for(layer.profile, "capability_semantics.control_mode")
             )
-            for layer in layers
-        )
+        ]
         floor, floor_level, floor_origin = self._default_control_mode(domain, layers, defaults)
+        strict_floor = CONTROL_MODE_RANK[floor] > CONTROL_MODE_RANK[ControlMode.CONFIRM]
+        lifting = [
+            layer
+            for layer in trusted_layers
+            if not strict_floor or layer.level in FLOOR_LIFTING_LEVELS
+        ]
         if (
-            not trusted_control
+            not lifting
             and CONTROL_MODE_RANK[floor]
             > CONTROL_MODE_RANK[effective.operational_boundaries.control_mode]
         ):
+            if trusted_layers:
+                held_back = ", ".join(layer.level for layer in trusted_layers)
+                resolution.warnings.append(
+                    f"{entity_id}: control_mode "
+                    f"{effective.operational_boundaries.control_mode.value} declared at "
+                    f"{held_back} scope does not replace the {floor.value} {floor_level} "
+                    "floor; declare it at entity, device, or domain scope"
+                )
             effective.operational_boundaries.control_mode = floor
+            # The held-back layers' control_reason explained their own mode, not
+            # the floor, so it must not be reported as the reason for it.
+            reason_path = "operational_boundaries.control_reason"
             resolution.explanations = [
-                entry for entry in resolution.explanations if entry.field_path != control_path
+                entry
+                for entry in resolution.explanations
+                if entry.field_path not in (control_path, reason_path)
             ]
             resolution.explanations.append(
                 FieldExplanation(
@@ -262,6 +299,13 @@ class InheritanceResolver:
                     provided_by_level=floor_level,
                     provided_by_origin=floor_origin,
                 )
+            )
+            _, effective.operational_boundaries.control_reason = self._conflicts.resolve_rule_d(
+                control_reason_layers(layers, floor),
+                reason_path,
+                "control_reason",
+                "operational_boundaries",
+                resolution,
             )
 
         declared_paths = {e.field_path for e in resolution.explanations}
